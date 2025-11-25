@@ -1,0 +1,26 @@
+# Core Django
+Django>=5.0,<5.1
+djangorestframework>=3.15.0
+
+# CORS para conectar con Vue
+django-cors-headers>=4.3.0
+
+# Variables de entorno (.env)
+python-dotenv>=1.0.0
+
+# Tareas asíncronas
+celery>=5.3.0
+redis>=5.0.0
+
+# Servidor WSGI (para producción / Docker)
+gunicorn>=21.2.0
+
+# Envío de correos (vía API / SMTP)
+sendgrid>=6.11.0
+
+# Imágenes (ImageField en User.profile_image)
+Pillow>=10.0.0
+
+# Documentación OpenAPI / Swagger
+drf-spectacular>=0.27.0
+drf-spectacular-sidecar>=2024.3.1
