@@ -1,5 +1,3 @@
-# api/views.py
-
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -22,8 +20,8 @@ class APIRootView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, *args, **kwargs):
-        base = request.build_absolute_uri("/")  # ej: http://localhost:8000/
-        api_base = request.build_absolute_uri(reverse("api-root"))  # /api/v1/
+        base = request.build_absolute_uri("/") 
+        api_base = request.build_absolute_uri(reverse("api-root")) 
 
         def _url(path: str) -> str:
             if path.startswith("/"):

@@ -53,11 +53,7 @@ from .filters import (
     EvaluacionFilter,
 )
 from .permissions import (
-    IsDocente,
-    IsAlumno,
-    IsApoderado,
     IsAdministradorAcademico,
-    IsJefeCurso,
     IsDocenteOrAdministradorAcademico,
     IsDocenteOrJefeCursoOrAdministradorAcademico,
 )
@@ -67,7 +63,6 @@ from academico.services import (
     asistencia as asistencia_service,
     evaluacion as evaluacion_service,
     alerta as alerta_service,
-    reporte as reporte_service,
 )
 
 # Utils
@@ -92,7 +87,7 @@ class BaseViewSet(viewsets.ModelViewSet):
 
 
 # ============================================================
-#  PERÍODOS ACADÉMICOS (por si quieres exponerlos)
+#  PERÍODOS ACADÉMICOS
 # ============================================================
 
 class PeriodoAcademicoViewSet(BaseViewSet):
@@ -127,10 +122,10 @@ class CursoViewSet(BaseViewSet):
     ordering = ["nivel", "nombre"]
 
     def get_permissions(self):
-        # Crear/editar/eliminar cursos → solo admin académico
+        # Crear/editar/eliminar cursos
         if self.action in ["create", "update", "partial_update", "destroy"]:
             return [permissions.IsAuthenticated(), IsAdministradorAcademico()]
-        # Listar/ver cursos → cualquier usuario autenticado
+        # Listar/ver cursos 
         return [permissions.IsAuthenticated()]
 
     @action(detail=True, methods=["get"], url_path="horario")
@@ -245,7 +240,7 @@ class HorarioViewSet(BaseViewSet):
     ordering = ["curso__nombre", "bloque__dia_semana", "bloque__hora_inicio"]
 
     def get_permissions(self):
-        # Crear/editar/eliminar horarios → docentes o admin académico
+        # Crear/editar/eliminar horarios
         if self.action in ["create", "update", "partial_update", "destroy"]:
             return [permissions.IsAuthenticated(), IsDocenteOrAdministradorAcademico()]
         return [permissions.IsAuthenticated()]
@@ -268,10 +263,10 @@ class AsistenciaViewSet(BaseViewSet):
     ordering = ["-fecha"]
 
     def get_permissions(self):
-        # Registrar/modificar asistencia → Docente, JefeCurso, Admin
+        # Registrar/modificar asistencia 
         if self.action in ["create", "update", "partial_update", "destroy", "alertas"]:
             return [permissions.IsAuthenticated(), IsDocenteOrJefeCursoOrAdministradorAcademico()]
-        # Ver asistencia → cualquier usuario autenticado
+        # Ver asistencia
         return [permissions.IsAuthenticated()]
 
     @action(detail=True, methods=["get", "post"], url_path="alertas")
@@ -291,13 +286,11 @@ class AsistenciaViewSet(BaseViewSet):
         estudiante = asistencia.estudiante
         curso = asistencia.curso
 
-        # GET → listar alertas existentes
         if request.method == "GET":
             qs = AlertaTemprana.objects.filter(estudiante=estudiante, curso=curso)
             serializer = AlertaTempranaSerializer(qs, many=True, context=self.get_serializer_context())
             return Response(serializer.data)
 
-        # POST → intentar generar una nueva alerta por asistencia
         alerta = asistencia_service.generar_alerta_por_asistencia(
             estudiante=estudiante,
             curso=curso,
@@ -334,10 +327,10 @@ class EvaluacionViewSet(BaseViewSet):
     ordering = ["-fecha_evaluacion"]
 
     def get_permissions(self):
-        # Crear/modificar evaluaciones → Docente o Admin académico
+        # Crear/modificar evaluaciones
         if self.action in ["create", "update", "partial_update", "destroy", "publicar", "exportar_notas_excel"]:
             return [permissions.IsAuthenticated(), IsDocenteOrAdministradorAcademico()]
-        # Ver evaluaciones → cualquier usuario autenticado
+        # Ver evaluaciones 
         return [permissions.IsAuthenticated()]
 
     @action(detail=True, methods=["post"], url_path="publicar")
@@ -395,7 +388,7 @@ class EvaluacionViewSet(BaseViewSet):
 
 
 # ============================================================
-#  NOTAS (CALIFICACIONES)
+#  NOTAS
 # ============================================================
 
 class NotaViewSet(BaseViewSet):
@@ -413,10 +406,10 @@ class NotaViewSet(BaseViewSet):
     ordering = ["-fecha_registro"]
 
     def get_permissions(self):
-        # Crear/modificar notas → Docente o Admin
+        # Crear/modificar notas
         if self.action in ["create", "update", "partial_update", "destroy", "importar_excel"]:
             return [permissions.IsAuthenticated(), IsDocenteOrAdministradorAcademico()]
-        # Ver notas → cualquier usuario autenticado
+        # Ver notas
         return [permissions.IsAuthenticated()]
 
     @action(detail=False, methods=["post"], url_path="importar-excel")
@@ -477,7 +470,7 @@ class NotaViewSet(BaseViewSet):
 
 
 # ============================================================
-#  PROMEDIOS FINALES (extra profesional)
+#  PROMEDIOS FINALES
 # ============================================================
 
 class PromedioFinalViewSet(BaseViewSet):
@@ -518,7 +511,7 @@ class ReunionViewSet(BaseViewSet):
     ordering = ["-fecha"]
 
     def get_permissions(self):
-        # Crear/editar reuniones → Docentes y admin académico
+        # Crear/editar reuniones
         if self.action in ["create", "update", "partial_update", "destroy"]:
             return [permissions.IsAuthenticated(), IsDocenteOrAdministradorAcademico()]
         return [permissions.IsAuthenticated()]
@@ -545,7 +538,7 @@ class ObservacionViewSet(BaseViewSet):
     ordering = ["-fecha"]
 
     def get_permissions(self):
-        # Crear/editar observaciones → docentes y admin académico
+        # Crear/editar observaciones
         if self.action in ["create", "update", "partial_update", "destroy"]:
             return [permissions.IsAuthenticated(), IsDocenteOrAdministradorAcademico()]
         return [permissions.IsAuthenticated()]
@@ -599,7 +592,7 @@ class AlertaTempranaViewSet(BaseViewSet):
     ordering = ["-fecha_creacion"]
 
     def get_permissions(self):
-        # Cerrar o crear alertas → Docente/Admin
+        # Cerrar o crear alertas
         if self.action in ["create", "update", "partial_update", "destroy", "cerrar"]:
             return [permissions.IsAuthenticated(), IsDocenteOrAdministradorAcademico()]
         return [permissions.IsAuthenticated()]

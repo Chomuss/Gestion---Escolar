@@ -8,9 +8,8 @@ from django.core.exceptions import ValidationError
 #  UTILIDAD: VALIDACIÓN DE RUT CHILENO
 # ============================================================
 
-def validar_rut_chileno(rut: str) -> bool:
+def validar_rut(rut: str) -> bool:
     """
-    Valida un RUT chileno.
     - Elimina puntos y guiones.
     - Acepta K/k como dígito verificador.
     - Retorna True si el RUT es válido, False en caso contrario.
@@ -105,7 +104,7 @@ class Role(models.Model):
 
 
 # ============================================================
-#  PERMISOS TRANSVERSALES (EXTRA)
+#  PERMISOS TRANSVERSALES
 # ============================================================
 
 class CustomPermission(models.Model):
@@ -339,7 +338,7 @@ class User(AbstractUser):
             rut_normalizado = self.rut.replace(".", "").replace("-", "").upper().strip()
             self.rut = rut_normalizado
 
-            if not validar_rut_chileno(self.rut):
+            if not validar_rut(self.rut):
                 errors["rut"] = "El RUT ingresado no es válido."
         else:
             # Si no hay RUT y el rol exige RUT

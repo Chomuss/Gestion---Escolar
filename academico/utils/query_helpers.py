@@ -1,9 +1,7 @@
-# academico/utils/query.py
-
 from datetime import date
 from typing import Optional
 
-from django.db.models import QuerySet, Prefetch
+from django.db.models import QuerySet
 
 from academico.models import (
     Asistencia,

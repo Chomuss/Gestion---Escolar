@@ -1,5 +1,3 @@
-# academico/utils/excel.py
-
 import csv
 import io
 from typing import Iterable, Tuple
@@ -11,7 +9,7 @@ from usuarios.models import User
 
 
 # ============================================================
-#  EXPORTAR NOTAS A CSV (EXCEL)
+#  EXPORTAR NOTAS A CSV
 # ============================================================
 
 def generar_csv_notas_evaluacion(evaluacion: Evaluacion) -> str:
@@ -87,7 +85,7 @@ def adjuntar_csv_notas_a_evaluacion(evaluacion: Evaluacion, field_name: str = "a
 
 
 # ============================================================
-#  IMPORTAR NOTAS DESDE CSV (EXCEL)
+#  IMPORTAR NOTAS DESDE CSV
 # ============================================================
 
 def parsear_csv_notas(file) -> Iterable[Tuple[int, float, str]]:
@@ -104,7 +102,6 @@ def parsear_csv_notas(file) -> Iterable[Tuple[int, float, str]]:
 
     Si usas delimitador diferente, ajusta el `delimiter`.
     """
-    # Aceptamos bytes o string
     if hasattr(file, "read"):
         raw = file.read().decode("utf-8")
     else:
@@ -114,7 +111,6 @@ def parsear_csv_notas(file) -> Iterable[Tuple[int, float, str]]:
     reader = csv.DictReader(buffer, delimiter=';')
 
     for row in reader:
-        # Ignoramos filas sin ID o sin nota
         if not row.get("ID estudiante") or not row.get("Nota"):
             continue
 
@@ -175,7 +171,7 @@ def importar_notas_desde_csv_para_evaluacion(
                 },
             )
             if not created:
-                # Si ya existía y no queremos actualizar, lo saltamos
+                # Si ya existía y no queremos actualizar, se salta
                 continue
 
         procesados += 1

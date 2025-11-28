@@ -1,5 +1,3 @@
-# academico/services/alerta.py
-
 from datetime import timedelta
 from typing import Optional
 
@@ -68,7 +66,7 @@ def enviar_notificaciones_alerta(alerta: AlertaTemprana) -> None:
     curso = alerta.curso
     jefe_curso = curso.jefe_curso if curso else None
 
-    # Mapeamos nivel_riesgo → nivel de notificación
+    # nivel de notificación
     nivel_riesgo = alerta.nivel_riesgo
     if nivel_riesgo == "ALTO":
         level = "URGENT"
@@ -121,7 +119,7 @@ def cerrar_alerta(
     alerta.fecha_cierre = ahora
     alerta.save(update_fields=["estado", "fecha_cierre"])
 
-    # Notificación opcional al creador o responsable
+    # Notificación al responsable
     if usuario:
         Notification.objects.create(
             user=usuario,

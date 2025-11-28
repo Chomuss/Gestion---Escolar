@@ -46,7 +46,7 @@ def crear_log_actividad(actor: User, accion: str, request=None):
         ip = request.META.get("REMOTE_ADDR")
         ua = request.META.get("HTTP_USER_AGENT", "")
 
-    # Si aún no hay actor (por algún contexto extraño) no registrar
+    # Si aún no hay actor no registrar
     if actor and actor.is_authenticated:
         UserActivityLog.objects.create(
             user=actor,
@@ -160,7 +160,7 @@ class UserViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     # --------------------------------------------------------
-    #  change-password (usuario cambia SU propia contraseña)
+    #  change-password - usuario cambia SU propia contraseña
     # --------------------------------------------------------
 
     @action(detail=False, methods=["post"], url_path="change-password")

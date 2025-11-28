@@ -1,7 +1,5 @@
-# academico/services/evaluacion.py
-
 from decimal import Decimal
-from typing import Optional, Tuple
+from typing import Optional
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -96,7 +94,7 @@ def publicar_evaluacion(
 
     estudiantes = curso.estudiantes.all()
 
-    # Notificación interna a docentes o usuario que publica
+    # Notificación interna a docentes o usuario que lo publica
     destinatario_docente = usuario or evaluacion.docente
     if destinatario_docente:
         Notification.objects.create(
@@ -122,7 +120,7 @@ def publicar_evaluacion(
                 level="INFO",
             )
 
-    # Correos a apoderados -> usamos relación alumno.apoderados
+    # Correos a apoderados
     if notificar_apoderados:
         for est in estudiantes:
             for apoderado in est.apoderados.all():

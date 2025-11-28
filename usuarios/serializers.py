@@ -8,7 +8,7 @@ from .models import (
     UserGroup,
     Notification,
     UserActivityLog,
-    validar_rut_chileno
+    validar_rut
 )
 
 
@@ -213,7 +213,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"rut": "El RUT es obligatorio para alumnos y apoderados."})
 
             rut_norm = rut.replace(".", "").replace("-", "").upper().strip()
-            if not validar_rut_chileno(rut_norm):
+            if not validar_rut(rut_norm):
                 raise serializers.ValidationError({"rut": "El RUT ingresado no es válido."})
 
         # B) No permitir asignación de sí mismo como apoderado o alumno

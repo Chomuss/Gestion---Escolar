@@ -138,22 +138,22 @@ CELERY_ENABLE_UTC = False
 # Para tareas periódica
 
 CELERY_BEAT_SCHEDULE = {
-    # Detectar alertas tempranas todos los días a las 03:00 AM
+    # Detectar alertas tempranas todos los días a las 06:30 AM
     "detectar_alertas_tempranas_diario": {
         "task": "academico.tasks.detectar_alertas_tempranas_task",
-        "schedule": crontab(hour=3, minute=0),
+        "schedule": crontab(hour=6, minute=30),
     },
 
-    # Controlar atrasos de evaluaciones todos los días a las 04:00 AM
+    # Controlar atrasos de evaluaciones todos los días a las 08:00 AM
     "controlar_atrasos_evaluaciones_diario": {
         "task": "academico.tasks.controlar_atrasos_evaluaciones_task",
-        "schedule": crontab(hour=4, minute=0),
+        "schedule": crontab(hour=8, minute=0),
     },
 
-    # Cerrar alertas viejas una vez al día a las 05:00 AM
+    # Cerrar alertas viejas una vez al día a las 06:00 AM
     "cerrar_alertas_viejas_diario": {
         "task": "academico.tasks.cerrar_alertas_viejas_task",
-        "schedule": crontab(hour=5, minute=0),
+        "schedule": crontab(hour=6, minute=0),
     },
 
     # Procesar correos en cola cada 5 minutos
@@ -173,7 +173,7 @@ EMAIL_HOST = "smtp.sendgrid.net"
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 
-EMAIL_HOST_USER = "apikey"  # Sí, literalmente "apikey"
+EMAIL_HOST_USER = "apikey" 
 EMAIL_HOST_PASSWORD = os.getenv("SENDGRID_API_KEY")
 DEFAULT_FROM_EMAIL = os.getenv("SENDGRID_SENDER")
 

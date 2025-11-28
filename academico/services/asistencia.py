@@ -1,5 +1,3 @@
-# academico/services/asistencia.py
-
 from datetime import date
 from typing import Optional, Dict
 
@@ -149,7 +147,7 @@ def notificar_apoderados_por_inasistencia(asistencia: Asistencia) -> None:
         asunto_base = "Atraso a clase"
         estado_legible = "atrasado"
     else:
-        # Si está presente, no notificamos
+        # Si está presente, no notifica
         return
 
     for apoderado in apoderados:

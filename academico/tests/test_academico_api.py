@@ -1,5 +1,3 @@
-# academico/tests/test_academico_api.py
-
 from datetime import date, timedelta
 
 from django.contrib.auth import get_user_model
@@ -43,7 +41,7 @@ class AcademicoAPITestCase(APITestCase):
         cls.periodo = PeriodoAcademico.objects.create(
             nombre="Periodo Test 2024",
             anio=2024,
-            tipo="ANUAL",  # ajusta si tu modelo usa otros choices
+            tipo="ANUAL",
             fecha_inicio=date(2024, 3, 1),
             fecha_fin=date(2024, 12, 31),
             activo=True,
@@ -51,9 +49,8 @@ class AcademicoAPITestCase(APITestCase):
 
         cls.curso = Curso.objects.create(
             nombre="4° Medio A",
-            nivel="4M",  # ajusta según tu modelo
+            nivel="4M",
             periodo=cls.periodo,
-            # quita o ajusta estos si tu modelo no los tiene
             capacidad_maxima=40,
             jefe_curso=cls.admin_user,
         )
@@ -61,7 +58,7 @@ class AcademicoAPITestCase(APITestCase):
         cls.asignatura = Asignatura.objects.create(
             nombre="Matemáticas",
             codigo="MAT-TEST",
-            tipo="OBLIGATORIA",  # usa un choice válido si corresponde
+            tipo="OBLIGATORIA", 
             carga_horaria_semanal=4,
         )
 
@@ -71,10 +68,10 @@ class AcademicoAPITestCase(APITestCase):
             docente=cls.admin_user,
             periodo=cls.periodo,
             titulo="Prueba Diagnóstica",
-            tipo="PRUEBA",  # ajusta al choice real de tu modelo
+            tipo="PRUEBA",
             fecha_evaluacion=date.today(),
             fecha_limite_publicacion=date.today() + timedelta(days=7),
-            estado="BORRADOR",  # ajusta al estado inicial válido
+            estado="BORRADOR",
             ponderacion=0.3,
         )
 
@@ -90,8 +87,6 @@ class AcademicoAPITestCase(APITestCase):
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        # Tu respuesta actual es plana, sin "success"
-        # {'status': 'ok', 'time': '...', 'version': 'v1'}
         self.assertIn("status", response.data)
         self.assertEqual(response.data["status"], "ok")
 
@@ -114,7 +109,6 @@ class AcademicoAPITestCase(APITestCase):
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        # Respuesta plana con los campos del serializer
         self.assertIn("id", response.data)
         self.assertEqual(response.data["id"], self.admin_user.id)
 
@@ -178,7 +172,6 @@ class AcademicoAPITestCase(APITestCase):
         # Según tus logs actuales, esto devuelve 403 (permiso denegado)
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
-        # Confirmamos que el estado NO cambió
         self.evaluacion.refresh_from_db()
         self.assertEqual(self.evaluacion.estado, estado_inicial)
         self.assertIsNone(self.evaluacion.fecha_publicacion)
@@ -198,7 +191,6 @@ class AcademicoAPITestCase(APITestCase):
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        # Estructura paginada estándar: {count, next, previous, results}
         self.assertIn("results", response.data)
         self.assertIsInstance(response.data["results"], list)
 
@@ -221,13 +213,13 @@ class AcademicoAPITestCase(APITestCase):
         """
         self.client.force_authenticate(user=self.admin_user)
 
-        # Creamos una asistencia AUSENTE para el mismo usuario/curso/asignatura
+        # Se crea una asistencia AUSENTE para el mismo usuario/curso/asignatura
         asistencia = Asistencia.objects.create(
             estudiante=self.admin_user,
             curso=self.curso,
             asignatura=self.asignatura,
             fecha=date.today(),
-            estado="AUSENTE",        # ajusta si tu modelo usa otro código de estado
+            estado="AUSENTE",    
             es_justificada=False,
             registrado_por=self.admin_user,
         )
@@ -252,7 +244,7 @@ class AcademicoAPITestCase(APITestCase):
             (status.HTTP_200_OK, status.HTTP_201_CREATED, status.HTTP_403_FORBIDDEN),
         )
 
-        # Si NO es 403, comprobamos que haya (al menos) una alerta para ese estudiante+curso
+        # Si NO es 403, se comprueba que haya al menos una alerta para ese estudiante + curso
         if response_post.status_code in (status.HTTP_200_OK, status.HTTP_201_CREATED):
             existe_alerta = AlertaTemprana.objects.filter(
                 estudiante=self.admin_user,

@@ -314,7 +314,6 @@ class CalificacionSerializer(serializers.ModelSerializer):
 
     def validate_nota(self, value):
         if value < 1.0 or value > 7.0:
-            # Aunque el modelo ya tiene validators, damos un mensaje claro desde el serializer.
             raise serializers.ValidationError("La nota debe estar en el rango 1.0 a 7.0.")
         return value
 
@@ -555,8 +554,6 @@ class ReporteNotasPeriodoSerializer(serializers.ModelSerializer):
 
 class ArchivoAdjuntoSerializer(serializers.ModelSerializer):
     subido_por_detalle = UsuarioSimpleSerializer(source="subido_por", read_only=True)
-    # content_type y object_id se suelen tratar como internos del sistema
-    # y no se exponen directamente al front, pero los dejamos por si los necesitas.
 
     class Meta:
         model = ArchivoAdjunto

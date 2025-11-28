@@ -1,6 +1,5 @@
 from rest_framework import permissions
 
-# Reutilizamos la lógica de permisos de la app usuarios
 from usuarios.permissions import (
     RolePermissionBase,
     IsDocenteRole,
@@ -81,8 +80,7 @@ class IsJefeCurso(permissions.BasePermission):
         if not getattr(user, "role", None):
             return False
 
-        # Jefe de curso siempre será DOCENTE,
-        # pero dejamos que ADMIN y DIRECTOR también pasen esta primera barrera.
+        # Jefe de curso siempre será DOCENTE, pero ADMIN y DIRECTOR igual pueden pasar.
         return user.role.code in ["DOCENTE", "ADMIN", "DIRECTOR"]
 
     def has_object_permission(self, request, view, obj):
@@ -99,17 +97,15 @@ class IsJefeCurso(permissions.BasePermission):
         if isinstance(obj, Curso):
             return obj.jefe_curso_id == user.id
 
-        # Si el objeto tiene un FK 'curso' (Evaluacion, Asistencia, etc.)
         curso = getattr(obj, "curso", None)
         if isinstance(curso, Curso):
             return curso.jefe_curso_id == user.id
 
-        # Si no sabemos cómo asociarlo a un curso, por seguridad denegamos
         return False
 
 
 # ============================================================
-#  PERMISOS COMBINADOS (OR LÓGICO ENTRE ROLES)
+#  PERMISOS COMBINADOS
 # ============================================================
 
 class IsDocenteOrAdministradorAcademico(permissions.BasePermission):

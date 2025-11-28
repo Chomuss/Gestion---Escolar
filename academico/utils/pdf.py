@@ -1,5 +1,3 @@
-# academico/utils/pdf.py
-
 from io import BytesIO
 from typing import Iterable, List
 
@@ -36,7 +34,7 @@ def generar_pdf_simple(
     p.setFont("Helvetica", 11)
 
     for linea in lineas:
-        if y < 50:  # salto de página simple
+        if y < 50: 
             p.showPage()
             y = height - 50
             p.setFont("Helvetica", 11)

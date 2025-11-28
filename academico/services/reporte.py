@@ -1,5 +1,3 @@
-# academico/services/reporte.py
-
 import csv
 import io
 from decimal import Decimal
@@ -62,7 +60,7 @@ def generar_reporte_notas_curso_asignatura_periodo(
         cantidad=Count("id"),
     )
 
-    # 3) Promedios por estudiante (y actualización de PromedioFinal)
+    # 3) Promedios por estudiante
     promedios_por_estudiante = (
         calificaciones_qs
         .values("estudiante", "evaluacion__curso", "evaluacion__asignatura")
@@ -100,7 +98,7 @@ def generar_reporte_notas_curso_asignatura_periodo(
         f"{stats_globales['promedio']:.2f}",
     ])
 
-    writer.writerow([])  # línea en blanco
+    writer.writerow([]) 
 
     # Encabezado de detalle por estudiante
     writer.writerow(["DETALLE POR ESTUDIANTE"])
@@ -116,7 +114,7 @@ def generar_reporte_notas_curso_asignatura_periodo(
     ])
 
     # 5) Detalle por estudiante + actualización de PromedioFinal
-    from usuarios.models import User  # import local para evitar dependencias circulares
+    from usuarios.models import User
 
     for row in promedios_por_estudiante:
         estudiante_id = row["estudiante"]

@@ -4,7 +4,7 @@ from celery import shared_task
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
-from django.db.models import Avg, Count, Q
+from django.db.models import Avg, Count
 from django.utils import timezone
 
 from .models import (
@@ -18,7 +18,6 @@ from .models import (
 )
 from usuarios.models import Notification
 
-# Servicios de dominio
 from academico.services import asistencia as asistencia_service
 from academico.services import alerta as alerta_service
 from academico.services import reporte as reporte_service
@@ -30,7 +29,7 @@ User = get_user_model()
 #  PARÁMETROS DE NEGOCIO 
 # -------------------------------------------------------------------
 
-# % de inasistencia sobre el total de clases en un rango que dispara alerta (solo para filtro rápido)
+# % de inasistencia sobre el total de clases en un rango que dispara alerta
 ALERTA_INASISTENCIA_PORCENTAJE = 20
 
 # Nota bajo este umbral se considera crítica
@@ -68,7 +67,6 @@ def detectar_alertas_tempranas_task():
     # ------------------------------------------------------------------
     # 1. ALERTAS POR ASISTENCIA (usa asistencia_service + alerta_service)
     # ------------------------------------------------------------------
-    # Tomamos combinaciones estudiante-curso que tengan registros de asistencia
     pares = (
         Asistencia.objects.filter(fecha__range=(hace_30_dias, hoy))
         .values("estudiante", "curso")
@@ -100,7 +98,6 @@ def detectar_alertas_tempranas_task():
     # ------------------------------------------------------------------
     # 2. ALERTAS POR NOTAS BAJAS (usa alerta_service)
     # ------------------------------------------------------------------
-    # Calculamos promedios por estudiante/curso/asignatura
     notas_qs = (
         Calificacion.objects.values("estudiante", "evaluacion__curso", "evaluacion__asignatura")
         .annotate(

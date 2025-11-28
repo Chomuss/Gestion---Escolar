@@ -1,5 +1,3 @@
-# academico/services/horario.py
-
 from typing import Dict, List, Optional
 
 from django.core.exceptions import ValidationError

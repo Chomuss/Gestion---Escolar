@@ -78,7 +78,7 @@ class AsistenciaFilter(filters.FilterSet):
     fecha_desde = filters.DateFilter(field_name="fecha", lookup_expr="gte")
     fecha_hasta = filters.DateFilter(field_name="fecha", lookup_expr="lte")
 
-    # Aquí está el filtro por MES y AÑO de asistencia
+    # Aquí está el filtro por MES y AÑO
     mes = filters.NumberFilter(field_name="fecha", lookup_expr="month")
     anio = filters.NumberFilter(field_name="fecha", lookup_expr="year")
 
@@ -112,7 +112,7 @@ class PromedioFinalFilter(filters.FilterSet):
 
     aprobado = filters.BooleanFilter(field_name="aprobado")
 
-    # Aquí está el filtro por PROMEDIO (rango)
+    # Aquí está el filtro por PROMEDIO
     promedio_min = filters.NumberFilter(field_name="promedio", lookup_expr="gte")
     promedio_max = filters.NumberFilter(field_name="promedio", lookup_expr="lte")
 
