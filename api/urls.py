@@ -1,121 +1,29 @@
-from django.urls import path
+# api/urls.py
 
-from .views import (
-    # Perfil
-    MiPerfilAPIView,
+from django.urls import path, include
 
-    # Alumno
-    AlumnoDashboardAPIView,
-    AlumnoCursosAPIView,
-    AlumnoNotasPorCursoAPIView,
-    AlumnoAsistenciaPorCursoAPIView,
-    AlumnoObservacionesPorCursoAPIView,
-    AlumnoReportePeriodoAPIView,
+from .views import APIRootView, MeView, HealthCheckView
+from .schema import schema_view, swagger_ui_view, redoc_ui_view
 
-    # Docente
-    DocenteDashboardAPIView,
-    DocenteRegistrarAsistenciaAPIView,
-    DocenteRegistrarCalificacionAPIView,
-    DocenteRegistrarObservacionAPIView,
-    DocenteGenerarReportePeriodoAPIView,
-    DocenteReportePeriodoAPIView,
-
-    # Apoderado
-    ApoderadoDashboardAPIView,
-
-    # Director / Admin
-    DirectorDashboardAPIView,
-)
 
 urlpatterns = [
-    # ========================================================
-    #  PERFIL
-    # ========================================================
-    path("perfil/", MiPerfilAPIView.as_view(), name="api-perfil"),
+    # Root de la versión v1
+    path("v1/", APIRootView.as_view(), name="api-root"),
 
-    # ========================================================
-    #  ALUMNO
-    # ========================================================
-    path(
-        "dashboard/alumno/",
-        AlumnoDashboardAPIView.as_view(),
-        name="api-dashboard-alumno",
-    ),
-    path(
-        "alumno/cursos/",
-        AlumnoCursosAPIView.as_view(),
-        name="api-alumno-cursos",
-    ),
-    path(
-        "alumno/cursos/<int:curso_id>/notas/",
-        AlumnoNotasPorCursoAPIView.as_view(),
-        name="api-alumno-notas-curso",
-    ),
-    path(
-        "alumno/cursos/<int:curso_id>/asistencia/",
-        AlumnoAsistenciaPorCursoAPIView.as_view(),
-        name="api-alumno-asistencia-curso",
-    ),
-    path(
-        "alumno/cursos/<int:curso_id>/observaciones/",
-        AlumnoObservacionesPorCursoAPIView.as_view(),
-        name="api-alumno-observaciones-curso",
-    ),
-    path(
-        "alumno/cursos/<int:curso_id>/reporte-periodo/<int:periodo_id>/",
-        AlumnoReportePeriodoAPIView.as_view(),
-        name="api-alumno-reporte-periodo",
-    ),
+    # Endpoints globales
+    path("v1/me/", MeView.as_view(), name="api-me"),
+    path("v1/health/", HealthCheckView.as_view(), name="api-health"),
 
-    # ========================================================
-    #  DOCENTE
-    # ========================================================
-    path(
-        "dashboard/docente/",
-        DocenteDashboardAPIView.as_view(),
-        name="api-dashboard-docente",
-    ),
-    path(
-        "docente/asistencia/registrar/",
-        DocenteRegistrarAsistenciaAPIView.as_view(),
-        name="api-docente-registrar-asistencia",
-    ),
-    path(
-        "docente/calificaciones/registrar/",
-        DocenteRegistrarCalificacionAPIView.as_view(),
-        name="api-docente-registrar-calificacion",
-    ),
-    path(
-        "docente/observaciones/registrar/",
-        DocenteRegistrarObservacionAPIView.as_view(),
-        name="api-docente-registrar-observacion",
-    ),
-    path(
-        "docente/reporte-periodo/generar/",
-        DocenteGenerarReportePeriodoAPIView.as_view(),
-        name="api-docente-generar-reporte-periodo",
-    ),
-    path(
-        "docente/reporte-periodo/<int:periodo_id>/<int:estudiante_id>/",
-        DocenteReportePeriodoAPIView.as_view(),
-        name="api-docente-reporte-periodo",
-    ),
+    # Módulo de usuarios
+    path("v1/usuarios/", include("usuarios.urls")),
 
-    # ========================================================
-    #  APODERADO
-    # ========================================================
-    path(
-        "dashboard/apoderado/",
-        ApoderadoDashboardAPIView.as_view(),
-        name="api-dashboard-apoderado",
-    ),
+    # Módulo académico
+    path("v1/academico/", include("academico.urls")),
 
-    # ========================================================
-    #  DIRECTOR / ADMIN
-    # ========================================================
-    path(
-        "dashboard/director/",
-        DirectorDashboardAPIView.as_view(),
-        name="api-dashboard-director",
-    ),
+    # Schema OpenAPI
+    path("schema/", schema_view, name="api-schema"),
+
+    # Documentación interactiva
+    path("docs/", swagger_ui_view, name="api-docs"),
+    path("redoc/", redoc_ui_view, name="api-redoc"),
 ]

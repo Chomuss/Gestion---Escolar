@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from celery.schedules import crontab
+
 import os
 from dotenv import load_dotenv
 
@@ -26,18 +28,34 @@ INSTALLED_APPS = [
     'usuarios',
     'academico',
     'api',
+    'corsheaders',
+    'rest_framework',
+    'django_filters',
+    'drf_spectacular',
 ]
 
+AUTH_USER_MODEL = 'usuarios.User'
+
+
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
-    "usuarios.middleware.SecurityAuditMiddleware",
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+CORS_ALLOW_ALL_ORIGINS = True
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:8080", 
+    "https://mi-sitio-vue.com", 
+]
+
+CORS_ALLOW_CREDENTIALS = True
 
 ROOT_URLCONF = 'gestion_escolar.urls'
 
@@ -120,22 +138,31 @@ CELERY_ENABLE_UTC = False
 # Para tareas periódica
 
 CELERY_BEAT_SCHEDULE = {
-
-    "procesar_cola_correos_cada_minuto": {
-        "task": "academico.tasks.procesar_cola_correos",
-        "schedule": 60,  # cada 1 minuto
+    # Detectar alertas tempranas todos los días a las 03:00 AM
+    "detectar_alertas_tempranas_diario": {
+        "task": "academico.tasks.detectar_alertas_tempranas_task",
+        "schedule": crontab(hour=3, minute=0),
     },
 
-    "verificar_alertas_tempranas_cada_dia": {
-        "task": "academico.tasks.verificar_alertas_tempranas",
-        "schedule": 60 * 60 * 24,  # una vez al día
+    # Controlar atrasos de evaluaciones todos los días a las 04:00 AM
+    "controlar_atrasos_evaluaciones_diario": {
+        "task": "academico.tasks.controlar_atrasos_evaluaciones_task",
+        "schedule": crontab(hour=4, minute=0),
     },
 
-    "generar_reporte_periodo_mensual": {
-        "task": "academico.tasks.generar_reporte_periodo",
-        "schedule": 60 * 60 * 24 * 30,  # una vez al mes
+    # Cerrar alertas viejas una vez al día a las 05:00 AM
+    "cerrar_alertas_viejas_diario": {
+        "task": "academico.tasks.cerrar_alertas_viejas_task",
+        "schedule": crontab(hour=5, minute=0),
+    },
+
+    # Procesar correos en cola cada 5 minutos
+    "procesar_email_queue_cada_5_min": {
+        "task": "academico.tasks.procesar_email_queue_task",
+        "schedule": crontab(minute="*/5"),
     },
 }
+
 
 # ============================================================
 #  CONFIGURACIÓN SMTP PARA SENDGRID
@@ -150,14 +177,27 @@ EMAIL_HOST_USER = "apikey"  # Sí, literalmente "apikey"
 EMAIL_HOST_PASSWORD = os.getenv("SENDGRID_API_KEY")
 DEFAULT_FROM_EMAIL = os.getenv("SENDGRID_SENDER")
 
-
 REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    "DEFAULT_PAGINATION_CLASS": "api.pagination.StandardResultsSetPagination",
+    "PAGE_SIZE": 20,
+        "DEFAULT_RENDERER_CLASSES": [
+        "api.renderers.CustomJSONRenderer",
+        "rest_framework.renderers.BrowsableAPIRenderer",
+    ],
+    "EXCEPTION_HANDLER": "api.exceptions.custom_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+
 }
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "Gestión Escolar – API",
-    "DESCRIPTION": "Documentación completa de la API para el sistema de gestión escolar.",
+    "TITLE": "Gestión Escolar API",
+    "DESCRIPTION": "API para la gestión académica, usuarios y procesos escolares.",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
 }

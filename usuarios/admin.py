@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
-
+from django.contrib.auth.models import Group
 from .models import (
     User,
     Role,
@@ -14,19 +14,17 @@ from .models import (
 # ============================================================
 #  ROLES
 # ============================================================
-
 @admin.register(Role)
 class RoleAdmin(admin.ModelAdmin):
-    list_display = ("code", "get_code_display", "hierarchy")
-    list_filter = ("code",)
+    list_display = ("code", "description", "hierarchy")
+    list_filter = ("code", "hierarchy")
     search_fields = ("code", "description")
     ordering = ("hierarchy",)
 
 
 # ============================================================
-#  PERMISOS EXTRA
+#  PERMISOS PERSONALIZADOS
 # ============================================================
-
 @admin.register(CustomPermission)
 class CustomPermissionAdmin(admin.ModelAdmin):
     list_display = ("code", "name")
@@ -34,22 +32,23 @@ class CustomPermissionAdmin(admin.ModelAdmin):
 
 
 # ============================================================
-#  GRUPOS INSTITUCIONALES (Cursos, Talleres, Niveles)
+#  GRUPOS INSTITUCIONALES
 # ============================================================
-
 @admin.register(UserGroup)
 class UserGroupAdmin(admin.ModelAdmin):
     list_display = ("name", "description")
-    search_fields = ("name",)
+    search_fields = ("name", "description")
 
 
 # ============================================================
 #  USUARIO PERSONALIZADO
 # ============================================================
-
 @admin.register(User)
 class UserAdmin(DjangoUserAdmin):
 
+    # ------------------------------
+    #  Cómo se muestran en la lista
+    # ------------------------------
     list_display = (
         "username",
         "first_name",
@@ -58,14 +57,18 @@ class UserAdmin(DjangoUserAdmin):
         "role",
         "active",
         "is_blocked",
+        "is_staff",
+        "is_superuser",
         "last_login_ip",
         "created_at",
     )
 
     list_filter = (
-        "role__code",
+        "role",
         "active",
         "is_blocked",
+        "is_staff",
+        "is_superuser",
         "groups_institutional",
     )
 
@@ -79,6 +82,9 @@ class UserAdmin(DjangoUserAdmin):
 
     ordering = ("username",)
 
+    # ------------------------------
+    #  Read-only fields
+    # ------------------------------
     readonly_fields = (
         "last_login",
         "last_login_ip",
@@ -88,15 +94,20 @@ class UserAdmin(DjangoUserAdmin):
         "blocked_until",
     )
 
-    # SOLO incluir campos que sean realmente ManyToManyField
+    # ------------------------------
+    #  M2M horizontal selectors
+    # ------------------------------
     filter_horizontal = (
         "groups_institutional",
         "extra_permissions",
         "apoderados",
     )
 
+    # ------------------------------
+    #  Campos agrupados (Muy Pro)
+    # ------------------------------
     fieldsets = (
-        ("Información de Cuenta", {
+        ("Cuenta", {
             "fields": (
                 "username",
                 "password",
@@ -105,7 +116,7 @@ class UserAdmin(DjangoUserAdmin):
             )
         }),
 
-        ("Información Personal", {
+        ("Información personal", {
             "fields": (
                 "first_name",
                 "last_name",
@@ -124,12 +135,11 @@ class UserAdmin(DjangoUserAdmin):
                 "groups_institutional",
                 "extra_permissions",
                 "apoderados",
-                "alumnos",
                 "enrollment_year",
             )
         }),
 
-        ("Seguridad", {
+        ("Permisos y Estado del Usuario", {
             "fields": (
                 "is_superuser",
                 "is_staff",
@@ -137,6 +147,11 @@ class UserAdmin(DjangoUserAdmin):
                 "blocked_until",
                 "failed_attempts",
                 "must_change_password",
+            )
+        }),
+
+        ("Datos del Sistema", {
+            "fields": (
                 "last_login",
                 "last_login_ip",
             )
@@ -150,11 +165,27 @@ class UserAdmin(DjangoUserAdmin):
         }),
     )
 
+    # ------------------------------
+    #  Configuración para "Añadir usuario"
+    # ------------------------------
+    add_fieldsets = (
+        ("Crear nuevo usuario", {
+            "classes": ("wide",),
+            "fields": (
+                "username",
+                "password1",
+                "password2",
+                "email",
+                "role",
+                "active",
+            ),
+        }),
+    )
+
 
 # ============================================================
 #  NOTIFICACIONES
 # ============================================================
-
 @admin.register(Notification)
 class NotificationAdmin(admin.ModelAdmin):
     list_display = ("title", "user", "level", "is_read", "created_at")
@@ -163,9 +194,8 @@ class NotificationAdmin(admin.ModelAdmin):
 
 
 # ============================================================
-#  AUDITORÍA / LOG DE ACTIVIDAD
+#  LOG DE ACTIVIDAD
 # ============================================================
-
 @admin.register(UserActivityLog)
 class ActivityLogAdmin(admin.ModelAdmin):
     list_display = ("user", "action", "ip_address", "created_at")

@@ -1,25 +1,27 @@
 from django.contrib import admin
+from django.contrib.contenttypes.admin import GenericTabularInline
 
 from .models import (
-    AnioAcademico,
     PeriodoAcademico,
-    Nivel,
     Curso,
-    Sala,
     Asignatura,
-    AsignaturaCursoDocente,
-    Matricula,
+    Sala,
+    Recurso,
     BloqueHorario,
+    HorarioCurso,
     Asistencia,
     Evaluacion,
     Calificacion,
     PromedioFinal,
     Observacion,
-    EmailQueue,
-    ReunionApoderados,
-    AsistenciaReunionApoderado,
     AlertaTemprana,
+    Intervencion,
+    ReunionApoderados,
+    MinutaReunion,
+    AsistenciaReunionApoderado,
     ReporteNotasPeriodo,
+    ArchivoAdjunto,
+    EmailQueue,
 )
 
 
@@ -27,135 +29,124 @@ from .models import (
 #  INLINES
 # ============================================================
 
-class MatriculaInline(admin.TabularInline):
-    model = Matricula
+class HorarioCursoInline(admin.TabularInline):
+    model = HorarioCurso
     extra = 0
-    autocomplete_fields = ("estudiante",)
-    fields = ("estudiante", "estado", "fecha_matricula", "observacion")
-    readonly_fields = ("fecha_matricula",)
+    autocomplete_fields = ("asignatura", "docente", "sala", "bloque")
+    show_change_link = True
 
 
-class AsignaturaCursoDocenteInline(admin.TabularInline):
-    model = AsignaturaCursoDocente
+class MinutaReunionInline(admin.StackedInline):
+    model = MinutaReunion
     extra = 0
-    autocomplete_fields = ("asignatura", "docente")
-
-
-class BloqueHorarioInline(admin.TabularInline):
-    model = BloqueHorario
-    extra = 0
-    autocomplete_fields = ("sala",)
-    fields = ("dia_semana", "hora_inicio", "hora_fin", "sala")
+    show_change_link = True
 
 
 class AsistenciaReunionInline(admin.TabularInline):
     model = AsistenciaReunionApoderado
     extra = 0
-    autocomplete_fields = ("apoderado",)
-    fields = ("apoderado", "asistio", "observacion")
+    autocomplete_fields = ("apoderado", "estudiante")
+
+
+class ArchivoAdjuntoInline(GenericTabularInline):
+    """
+    Inline genérico para adjuntar archivos a observaciones,
+    intervenciones, reuniones, etc.
+    """
+    model = ArchivoAdjunto
+    extra = 0
 
 
 # ============================================================
-#  AÑO / PERIODO ACADÉMICO
+#  PERÍODOS ACADÉMICOS
 # ============================================================
-
-@admin.register(AnioAcademico)
-class AnioAcademicoAdmin(admin.ModelAdmin):
-    list_display = ("nombre", "fecha_inicio", "fecha_fin", "activo")
-    list_filter = ("activo",)
-    search_fields = ("nombre",)
-    ordering = ("-fecha_inicio",)
-
 
 @admin.register(PeriodoAcademico)
 class PeriodoAcademicoAdmin(admin.ModelAdmin):
-    list_display = ("nombre", "anio", "tipo", "orden", "fecha_inicio", "fecha_fin")
-    list_filter = ("anio", "tipo")
+    list_display = ("nombre", "anio", "tipo", "fecha_inicio", "fecha_fin", "activo")
+    list_filter = ("tipo", "anio", "activo")
     search_fields = ("nombre",)
-    ordering = ("anio", "orden")
+    ordering = ("-anio", "-fecha_inicio")
+    list_editable = ("activo",)
 
 
 # ============================================================
-#  NIVELES / CURSOS / SALAS
+#  CURSOS
 # ============================================================
-
-@admin.register(Nivel)
-class NivelAdmin(admin.ModelAdmin):
-    list_display = ("nombre",)
-    search_fields = ("nombre",)
-
 
 @admin.register(Curso)
 class CursoAdmin(admin.ModelAdmin):
-    list_display = ("nombre", "anio_academico", "nivel", "profesor_jefe", "total_estudiantes")
-    list_filter = ("anio_academico", "nivel")
-    search_fields = ("nombre", "profesor_jefe__first_name", "profesor_jefe__last_name")
-    inlines = [MatriculaInline, AsignaturaCursoDocenteInline]
+    list_display = ("nombre", "nivel", "periodo", "jefe_curso", "capacidad_maxima", "total_estudiantes")
+    list_filter = ("periodo", "nivel")
+    search_fields = ("nombre", "nivel", "jefe_curso__first_name", "jefe_curso__last_name", "jefe_curso__rut")
+    ordering = ("nivel", "nombre")
+    autocomplete_fields = ("periodo", "jefe_curso")
+    filter_horizontal = ("estudiantes",)
+    inlines = [HorarioCursoInline]
 
-
-@admin.register(Sala)
-class SalaAdmin(admin.ModelAdmin):
-    list_display = ("nombre", "ubicacion", "capacidad")
-    search_fields = ("nombre", "ubicacion")
+    def total_estudiantes(self, obj):
+        return obj.estudiantes.count()
+    total_estudiantes.short_description = "Nº estudiantes"
 
 
 # ============================================================
-#  ASIGNATURAS Y ASIGNACIONES
+#  ASIGNATURAS
 # ============================================================
 
 @admin.register(Asignatura)
 class AsignaturaAdmin(admin.ModelAdmin):
-    list_display = ("codigo", "nombre", "horas_semanales", "activa")
-    list_filter = ("activa",)
-    search_fields = ("codigo", "nombre")
-
-
-@admin.register(AsignaturaCursoDocente)
-class AsignaturaCursoDocenteAdmin(admin.ModelAdmin):
-    list_display = ("asignatura", "curso", "docente")
-    list_filter = ("curso__anio_academico", "curso__nivel", "docente")
-    search_fields = (
-        "asignatura__nombre",
-        "asignatura__codigo",
-        "curso__nombre",
-        "docente__first_name",
-        "docente__last_name",
-        "docente__username",
-    )
-    inlines = [BloqueHorarioInline]
+    list_display = ("nombre", "codigo", "tipo", "carga_horaria_semanal")
+    list_filter = ("tipo",)
+    search_fields = ("nombre", "codigo")
+    ordering = ("nombre",)
 
 
 # ============================================================
-#  MATRÍCULAS
+#  SALAS Y RECURSOS
 # ============================================================
 
-@admin.register(Matricula)
-class MatriculaAdmin(admin.ModelAdmin):
-    list_display = ("estudiante", "curso", "anio_academico", "estado", "fecha_matricula")
-    list_filter = ("anio_academico", "estado", "curso__nivel")
-    search_fields = (
-        "estudiante__username",
-        "estudiante__first_name",
-        "estudiante__last_name",
-        "curso__nombre",
-    )
-    autocomplete_fields = ("estudiante", "curso", "anio_academico")
+@admin.register(Sala)
+class SalaAdmin(admin.ModelAdmin):
+    list_display = ("nombre", "codigo", "tipo", "capacidad", "ubicacion")
+    list_filter = ("tipo",)
+    search_fields = ("nombre", "codigo", "ubicacion")
+    ordering = ("nombre",)
+
+
+@admin.register(Recurso)
+class RecursoAdmin(admin.ModelAdmin):
+    list_display = ("nombre", "sala", "activo")
+    list_filter = ("activo", "sala")
+    search_fields = ("nombre", "sala__nombre")
+    autocomplete_fields = ("sala",)
+    ordering = ("nombre",)
 
 
 # ============================================================
-#  HORARIOS
+#  BLOQUES HORARIOS Y HORARIOS DE CURSO
 # ============================================================
 
 @admin.register(BloqueHorario)
 class BloqueHorarioAdmin(admin.ModelAdmin):
-    list_display = ("asignacion", "dia_semana", "hora_inicio", "hora_fin", "sala")
-    list_filter = ("dia_semana", "asignacion__curso", "asignacion__asignatura")
+    list_display = ("periodo", "dia_semana", "hora_inicio", "hora_fin")
+    list_filter = ("periodo", "dia_semana")
+    search_fields = ("periodo__nombre",)
+    ordering = ("periodo", "dia_semana", "hora_inicio")
+    autocomplete_fields = ("periodo",)
+
+
+@admin.register(HorarioCurso)
+class HorarioCursoAdmin(admin.ModelAdmin):
+    list_display = ("curso", "asignatura", "docente", "sala", "bloque", "periodo", "es_rotativo")
+    list_filter = ("periodo", "curso", "asignatura", "docente", "sala", "es_rotativo")
     search_fields = (
-        "asignacion__asignatura__nombre",
-        "asignacion__curso__nombre",
-        "sala__nombre",
+        "curso__nombre",
+        "asignatura__nombre",
+        "docente__first_name",
+        "docente__last_name",
     )
-    autocomplete_fields = ("asignacion", "sala")
+    autocomplete_fields = ("curso", "asignatura", "docente", "sala", "bloque", "periodo")
+    ordering = ("curso", "bloque__dia_semana", "bloque__hora_inicio")
 
 
 # ============================================================
@@ -164,150 +155,223 @@ class BloqueHorarioAdmin(admin.ModelAdmin):
 
 @admin.register(Asistencia)
 class AsistenciaAdmin(admin.ModelAdmin):
-    list_display = ("fecha", "estudiante", "curso", "asignatura", "estado", "registrado_por")
-    list_filter = ("fecha", "estado", "curso", "asignatura")
+    list_display = (
+        "fecha",
+        "curso",
+        "asignatura",
+        "estudiante",
+        "estado",
+        "es_justificada",
+        "registrado_por",
+    )
+    list_filter = ("estado", "es_justificada", "curso", "asignatura")
     search_fields = (
-        "estudiante__username",
         "estudiante__first_name",
         "estudiante__last_name",
+        "estudiante__rut",
         "curso__nombre",
         "asignatura__nombre",
     )
     autocomplete_fields = ("estudiante", "curso", "asignatura", "registrado_por")
-    readonly_fields = ("creado_en",)
+    date_hierarchy = "fecha"
+    ordering = ("-fecha", "curso__nombre")
 
 
 # ============================================================
-#  EVALUACIONES / CALIFICACIONES / PROMEDIOS
+#  EVALUACIONES Y CALIFICACIONES
 # ============================================================
 
 @admin.register(Evaluacion)
 class EvaluacionAdmin(admin.ModelAdmin):
-    list_display = ("titulo", "asignacion", "tipo", "fecha", "ponderacion", "creado_por")
-    list_filter = ("tipo", "fecha", "asignacion__curso", "asignacion__asignatura", "periodo")
-    search_fields = ("titulo", "descripcion", "asignacion__asignatura__nombre", "asignacion__curso__nombre")
-    autocomplete_fields = ("asignacion", "periodo", "creado_por")
-    readonly_fields = ("creado_en",)
+    list_display = (
+        "titulo",
+        "curso",
+        "asignatura",
+        "docente",
+        "tipo",
+        "fecha_evaluacion",
+        "fecha_limite_publicacion",
+        "estado",
+        "ponderacion",
+    )
+    list_filter = ("periodo", "curso", "asignatura", "docente", "tipo", "estado")
+    search_fields = (
+        "titulo",
+        "curso__nombre",
+        "asignatura__nombre",
+        "docente__first_name",
+        "docente__last_name",
+    )
+    autocomplete_fields = ("curso", "asignatura", "docente", "periodo")
+    ordering = ("-fecha_evaluacion",)
+    list_editable = ("estado",)
 
 
 @admin.register(Calificacion)
 class CalificacionAdmin(admin.ModelAdmin):
-    list_display = ("evaluacion", "estudiante", "puntaje_obtenido", "porcentaje", "registrado_por", "registrado_en")
-    list_filter = ("evaluacion__asignacion__curso", "evaluacion__asignacion__asignatura")
+    list_display = ("evaluacion", "estudiante", "nota", "origen", "fecha_registro")
+    list_filter = ("origen", "evaluacion__curso", "evaluacion__asignatura")
     search_fields = (
-        "estudiante__username",
         "estudiante__first_name",
         "estudiante__last_name",
+        "estudiante__rut",
         "evaluacion__titulo",
+        "evaluacion__curso__nombre",
     )
-    autocomplete_fields = ("evaluacion", "estudiante", "registrado_por")
-    readonly_fields = ("registrado_en",)
+    autocomplete_fields = ("evaluacion", "estudiante")
+    date_hierarchy = "fecha_registro"
+    ordering = ("-fecha_registro",)
 
 
 @admin.register(PromedioFinal)
 class PromedioFinalAdmin(admin.ModelAdmin):
-    list_display = ("estudiante", "asignacion", "periodo", "promedio", "calculado_en")
-    list_filter = ("periodo", "asignacion__curso", "asignacion__asignatura")
+    list_display = ("estudiante", "curso", "asignatura", "periodo", "promedio", "aprobado", "fecha_calculo")
+    list_filter = ("periodo", "curso", "asignatura", "aprobado")
     search_fields = (
-        "estudiante__username",
         "estudiante__first_name",
         "estudiante__last_name",
-        "asignacion__asignatura__nombre",
-        "asignacion__curso__nombre",
+        "estudiante__rut",
+        "curso__nombre",
+        "asignatura__nombre",
     )
-    autocomplete_fields = ("estudiante", "asignacion", "periodo")
-    readonly_fields = ("calculado_en",)
+    autocomplete_fields = ("estudiante", "curso", "asignatura", "periodo")
+    ordering = ("-fecha_calculo",)
 
 
 # ============================================================
-#  OBSERVACIONES
+#  OBSERVACIONES, ALERTAS, INTERVENCIONES
 # ============================================================
 
 @admin.register(Observacion)
 class ObservacionAdmin(admin.ModelAdmin):
-    list_display = ("fecha", "estudiante", "tipo", "gravedad", "curso", "resuelta")
-    list_filter = ("tipo", "gravedad", "resuelta", "curso")
+    list_display = ("estudiante", "curso", "tipo", "gravedad", "requiere_seguimiento", "fecha")
+    list_filter = ("tipo", "gravedad", "requiere_seguimiento", "curso")
     search_fields = (
-        "estudiante__username",
         "estudiante__first_name",
         "estudiante__last_name",
+        "estudiante__rut",
         "descripcion",
     )
-    autocomplete_fields = ("estudiante", "curso", "registrada_por")
-    readonly_fields = ("resuelta_en",)
+    autocomplete_fields = ("estudiante", "autor", "curso")
+    date_hierarchy = "fecha"
+    ordering = ("-fecha",)
+    inlines = [ArchivoAdjuntoInline]
+
+
+@admin.register(AlertaTemprana)
+class AlertaTempranaAdmin(admin.ModelAdmin):
+    list_display = (
+        "estudiante",
+        "curso",
+        "origen",
+        "nivel_riesgo",
+        "estado",
+        "creada_por",
+        "fecha_creacion",
+        "fecha_cierre",
+    )
+    list_filter = ("origen", "nivel_riesgo", "estado", "curso")
+    search_fields = (
+        "estudiante__first_name",
+        "estudiante__last_name",
+        "estudiante__rut",
+        "descripcion",
+    )
+    autocomplete_fields = ("estudiante", "curso", "creada_por")
+    date_hierarchy = "fecha_creacion"
+    ordering = ("-fecha_creacion",)
+
+
+@admin.register(Intervencion)
+class IntervencionAdmin(admin.ModelAdmin):
+    list_display = ("estudiante", "alerta", "observacion", "responsable", "estado", "fecha")
+    list_filter = ("estado", "responsable", "alerta")
+    search_fields = (
+        "estudiante__first_name",
+        "estudiante__last_name",
+        "estudiante__rut",
+        "descripcion",
+    )
+    autocomplete_fields = ("estudiante", "alerta", "observacion", "responsable")
+    date_hierarchy = "fecha"
+    ordering = ("-fecha",)
+    inlines = [ArchivoAdjuntoInline]
 
 
 # ============================================================
-#  EMAIL QUEUE
-# ============================================================
-
-@admin.register(EmailQueue)
-class EmailQueueAdmin(admin.ModelAdmin):
-    list_display = ("asunto", "tipo_destinatario", "destinatario_usuario", "destinatario_curso", "enviado", "creado_en", "enviado_en")
-    list_filter = ("tipo_destinatario", "enviado")
-    search_fields = ("asunto", "contenido", "destinatario_usuario__username", "destinatario_curso__nombre")
-    autocomplete_fields = ("destinatario_usuario", "destinatario_curso")
-    readonly_fields = ("creado_en", "enviado_en")
-
-
-# ============================================================
-#  REUNIONES DE APODERADOS
+#  REUNIONES CON APODERADOS
 # ============================================================
 
 @admin.register(ReunionApoderados)
 class ReunionApoderadosAdmin(admin.ModelAdmin):
-    list_display = ("curso", "docente", "fecha", "tema", "creada_en")
-    list_filter = ("curso", "docente", "fecha")
-    search_fields = ("tema", "descripcion", "curso__nombre", "docente__username", "docente__first_name", "docente__last_name")
-    autocomplete_fields = ("curso", "docente")
-    readonly_fields = ("creada_en",)
-    inlines = [AsistenciaReunionInline]
-
-
-@admin.register(AsistenciaReunionApoderado)
-class AsistenciaReunionApoderadoAdmin(admin.ModelAdmin):
-    list_display = ("reunion", "apoderado", "asistio")
-    list_filter = ("asistio", "reunion__curso")
-    search_fields = (
-        "apoderado__username",
-        "apoderado__first_name",
-        "apoderado__last_name",
-        "reunion__tema",
+    list_display = (
+        "tipo",
+        "curso",
+        "estudiante",
+        "apoderado",
+        "docente",
+        "fecha",
+        "hora_inicio",
+        "hora_fin",
     )
-    autocomplete_fields = ("reunion", "apoderado")
-    
-
-# ============================================================
-#  ALERTAS TEMPRANAS
-# ============================================================
-
-@admin.register(AlertaTemprana)
-class AlertaTempranaAdmin(admin.ModelAdmin):
-    list_display = ("estudiante", "curso", "nivel", "motivo", "fecha", "notificada")
-    list_filter = ("nivel", "notificada", "curso")
+    list_filter = ("tipo", "curso", "docente")
     search_fields = (
-        "estudiante__username",
+        "curso__nombre",
         "estudiante__first_name",
         "estudiante__last_name",
-        "motivo",
-        "descripcion",
+        "apoderado__first_name",
+        "apoderado__last_name",
     )
-    autocomplete_fields = ("estudiante", "curso", "generada_por")
-    readonly_fields = ("fecha",)
+    autocomplete_fields = ("curso", "estudiante", "apoderado", "docente")
+    date_hierarchy = "fecha"
+    ordering = ("-fecha",)
+    inlines = [MinutaReunionInline, AsistenciaReunionInline, ArchivoAdjuntoInline]
 
 
 # ============================================================
-#  REPORTES POR PERIODO
+#  REPORTES DE NOTAS
 # ============================================================
 
 @admin.register(ReporteNotasPeriodo)
 class ReporteNotasPeriodoAdmin(admin.ModelAdmin):
-    list_display = ("estudiante", "periodo", "promedio_general", "generado_en")
-    list_filter = ("periodo__anio", "periodo")
-    search_fields = (
-        "estudiante__username",
-        "estudiante__first_name",
-        "estudiante__last_name",
-    )
-    autocomplete_fields = ("estudiante", "periodo")
-    readonly_fields = ("generado_en",)
+    list_display = ("curso", "asignatura", "periodo", "generado_por", "fecha_generacion")
+    list_filter = ("periodo", "curso", "asignatura")
+    search_fields = ("curso__nombre", "asignatura__nombre", "periodo__nombre")
+    autocomplete_fields = ("curso", "asignatura", "periodo", "generado_por")
+    date_hierarchy = "fecha_generacion"
+    ordering = ("-fecha_generacion",)
+
+
+# ============================================================
+#  ARCHIVOS ADJUNTOS GENÉRICOS
+# ============================================================
+
+@admin.register(ArchivoAdjunto)
+class ArchivoAdjuntoAdmin(admin.ModelAdmin):
+    list_display = ("archivo", "content_type", "object_id", "subido_por", "fecha_subida")
+    list_filter = ("content_type", "subido_por")
+    search_fields = ("archivo", "descripcion")
+    autocomplete_fields = ("subido_por",)
+    date_hierarchy = "fecha_subida"
+    ordering = ("-fecha_subida",)
+
+
+# ============================================================
+#  COLA DE EMAILS
+# ============================================================
+
+@admin.register(EmailQueue)
+class EmailQueueAdmin(admin.ModelAdmin):
+    list_display = ("destinatario", "asunto", "estado", "creado_en", "enviar_despues_de", "ultimo_error_resumido")
+    list_filter = ("estado",)
+    search_fields = ("destinatario", "asunto", "cuerpo")
+    date_hierarchy = "creado_en"
+    ordering = ("-creado_en",)
+
+    readonly_fields = ("creado_en", "ultimo_error")
+
+    def ultimo_error_resumido(self, obj):
+        if not obj.ultimo_error:
+            return ""
+        return (obj.ultimo_error[:75] + "...") if len(obj.ultimo_error) > 75 else obj.ultimo_error
+    ultimo_error_resumido.short_description = "Último error"

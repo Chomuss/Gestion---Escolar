@@ -1,89 +1,75 @@
+from django.contrib.auth import get_user_model
 from rest_framework import serializers
-from django.utils import timezone
 
-from usuarios.serializers import UserSerializer
 from .models import (
-    AnioAcademico,
     PeriodoAcademico,
-    Nivel,
     Curso,
-    Sala,
     Asignatura,
-    AsignaturaCursoDocente,
-    Matricula,
+    Sala,
+    Recurso,
     BloqueHorario,
+    HorarioCurso,
     Asistencia,
     Evaluacion,
     Calificacion,
     PromedioFinal,
     Observacion,
-    EmailQueue,
-    ReunionApoderados,
-    AsistenciaReunionApoderado,
     AlertaTemprana,
+    Intervencion,
+    ReunionApoderados,
+    MinutaReunion,
+    AsistenciaReunionApoderado,
     ReporteNotasPeriodo,
+    ArchivoAdjunto,
+    EmailQueue,
 )
 
+User = get_user_model()
+
 
 # ============================================================
-#  AÑO Y PERIODO ACADÉMICO
+#  SERIALIZADORES COMPARTIDOS / BÁSICOS
 # ============================================================
 
-class AnioAcademicoSerializer(serializers.ModelSerializer):
+class UsuarioSimpleSerializer(serializers.ModelSerializer):
+    """
+    Versión resumida del usuario para anidar en otros serializers.
+    """
+    full_name = serializers.SerializerMethodField()
+    role_code = serializers.CharField(source="role.code", read_only=True)
+    role_display = serializers.SerializerMethodField()
+
     class Meta:
-        model = AnioAcademico
-        fields = "__all__"
+        model = User
+        fields = (
+            "id",
+            "username",
+            "first_name",
+            "last_name",
+            "full_name",
+            "email",
+            "rut",
+            "role",
+            "role_code",
+            "role_display",
+        )
+        read_only_fields = ("id", "username", "role_code", "role_display")
+
+    def get_full_name(self, obj):
+        return f"{obj.first_name} {obj.last_name}".strip()
+
+    def get_role_display(self, obj):
+        return obj.role.get_code_display() if obj.role else None
 
 
 class PeriodoAcademicoSerializer(serializers.ModelSerializer):
-    anio = AnioAcademicoSerializer(read_only=True)
-
+    """
+    Periodo académico con todos sus campos.
+    """
     class Meta:
         model = PeriodoAcademico
         fields = "__all__"
 
-
-# ============================================================
-#  NIVELES Y CURSOS
-# ============================================================
-
-class NivelSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Nivel
-        fields = "__all__"
-
-
-class CursoSerializer(serializers.ModelSerializer):
-    nivel = NivelSerializer(read_only=True)
-    profesor_jefe = UserSerializer(read_only=True)
-
-    total_estudiantes = serializers.IntegerField(read_only=True)
-
-    class Meta:
-        model = Curso
-        fields = "__all__"
-
-
-class CursoCreateUpdateSerializer(serializers.ModelSerializer):
-    """Para crear/editar cursos, sin expandir información."""
-    class Meta:
-        model = Curso
-        fields = "__all__"
-
-
-# ============================================================
-#  SALAS
-# ============================================================
-
-class SalaSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Sala
-        fields = "__all__"
-
-
-# ============================================================
-#  ASIGNATURAS
-# ============================================================
 
 class AsignaturaSerializer(serializers.ModelSerializer):
     class Meta:
@@ -91,66 +77,108 @@ class AsignaturaSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
-# ============================================================
-#  ASIGNATURA – CURSO – DOCENTE
-# ============================================================
-
-class ACDSerializer(serializers.ModelSerializer):
-    asignatura = AsignaturaSerializer(read_only=True)
-    curso = CursoSerializer(read_only=True)
-    docente = UserSerializer(read_only=True)
-
+class SalaSerializer(serializers.ModelSerializer):
     class Meta:
-        model = AsignaturaCursoDocente
+        model = Sala
         fields = "__all__"
 
 
-class ACDCreateUpdateSerializer(serializers.ModelSerializer):
-    """Para creación / edición"""
+class RecursoSerializer(serializers.ModelSerializer):
+    sala_detalle = SalaSerializer(source="sala", read_only=True)
+
     class Meta:
-        model = AsignaturaCursoDocente
-        fields = "__all__"
+        model = Recurso
+        fields = (
+            "id",
+            "nombre",
+            "descripcion",
+            "sala",
+            "sala_detalle",
+        )
 
 
 # ============================================================
-#  MATRÍCULA
+#  CURSOS
 # ============================================================
 
-class MatriculaSerializer(serializers.ModelSerializer):
-    estudiante = UserSerializer(read_only=True)
-    curso = CursoSerializer(read_only=True)
-    anio_academico = AnioAcademicoSerializer(read_only=True)
+class CursoSerializer(serializers.ModelSerializer):
+    """
+    Serializer completo para cursos.
+    - Escribe con IDs (periodo, jefe_curso, estudiantes).
+    - Lee también detalle anidado.
+    """
+    periodo_detalle = PeriodoAcademicoSerializer(source="periodo", read_only=True)
+    jefe_curso_detalle = UsuarioSimpleSerializer(source="jefe_curso", read_only=True)
+    estudiantes_detalle = UsuarioSimpleSerializer(source="estudiantes", many=True, read_only=True)
+    total_estudiantes = serializers.SerializerMethodField()
 
     class Meta:
-        model = Matricula
-        fields = "__all__"
+        model = Curso
+        fields = (
+            "id",
+            "nombre",
+            "nivel",
+            "capacidad_maxima",
+            "periodo",
+            "periodo_detalle",
+            "jefe_curso",
+            "jefe_curso_detalle",
+            "estudiantes",
+            "estudiantes_detalle",
+            "total_estudiantes",
+        )
 
-
-class MatriculaCreateUpdateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Matricula
-        fields = "__all__"
+    def get_total_estudiantes(self, obj):
+        return obj.estudiantes.count() if obj.pk else 0
 
 
 # ============================================================
-#  HORARIO / BLOQUES
+#  BLOQUES HORARIOS Y HORARIOS DE CURSO
 # ============================================================
 
 class BloqueHorarioSerializer(serializers.ModelSerializer):
-    asignacion = ACDSerializer(read_only=True)
-    sala = SalaSerializer(read_only=True)
-
-    dia_nombre = serializers.CharField(source="get_dia_semana_display", read_only=True)
+    periodo_detalle = PeriodoAcademicoSerializer(source="periodo", read_only=True)
+    dia_semana_display = serializers.CharField(source="get_dia_semana_display", read_only=True)
 
     class Meta:
         model = BloqueHorario
-        fields = "__all__"
+        fields = (
+            "id",
+            "periodo",
+            "periodo_detalle",
+            "dia_semana",
+            "dia_semana_display",
+            "hora_inicio",
+            "hora_fin",
+        )
 
 
-class BloqueHorarioCreateUpdateSerializer(serializers.ModelSerializer):
+class HorarioCursoSerializer(serializers.ModelSerializer):
+    curso_detalle = CursoSerializer(source="curso", read_only=True)
+    asignatura_detalle = AsignaturaSerializer(source="asignatura", read_only=True)
+    docente_detalle = UsuarioSimpleSerializer(source="docente", read_only=True)
+    sala_detalle = SalaSerializer(source="sala", read_only=True)
+    bloque_detalle = BloqueHorarioSerializer(source="bloque", read_only=True)
+    periodo_detalle = PeriodoAcademicoSerializer(source="periodo", read_only=True)
+
     class Meta:
-        model = BloqueHorario
-        fields = "__all__"
+        model = HorarioCurso
+        fields = (
+            "id",
+            "curso",
+            "curso_detalle",
+            "asignatura",
+            "asignatura_detalle",
+            "docente",
+            "docente_detalle",
+            "sala",
+            "sala_detalle",
+            "bloque",
+            "bloque_detalle",
+            "periodo",
+            "periodo_detalle",
+            "es_rotativo",
+        )
 
 
 # ============================================================
@@ -158,221 +186,407 @@ class BloqueHorarioCreateUpdateSerializer(serializers.ModelSerializer):
 # ============================================================
 
 class AsistenciaSerializer(serializers.ModelSerializer):
-    estudiante = UserSerializer(read_only=True)
-    curso = CursoSerializer(read_only=True)
-    asignatura = AsignaturaSerializer(read_only=True)
-    registrado_por = UserSerializer(read_only=True)
+    estudiante_detalle = UsuarioSimpleSerializer(source="estudiante", read_only=True)
+    curso_detalle = CursoSerializer(source="curso", read_only=True)
+    asignatura_detalle = AsignaturaSerializer(source="asignatura", read_only=True)
+    registrado_por_detalle = UsuarioSimpleSerializer(source="registrado_por", read_only=True)
 
-    estado_nombre = serializers.CharField(source="get_estado_display", read_only=True)
+    estado_display = serializers.CharField(source="get_estado_display", read_only=True)
 
     class Meta:
         model = Asistencia
-        fields = "__all__"
+        fields = (
+            "id",
+            "estudiante",
+            "estudiante_detalle",
+            "curso",
+            "curso_detalle",
+            "asignatura",
+            "asignatura_detalle",
+            "fecha",
+            "estado",
+            "estado_display",
+            "motivo_inasistencia",
+            "es_justificada",
+            "registrado_por",
+            "registrado_por_detalle",
+            "fecha_registro",
+        )
+        read_only_fields = ("fecha_registro",)
 
+    def validate(self, attrs):
+        """
+        Ejemplo de validación “profesional”:
+        - Si la asistencia está marcada como JUSTIFICADA, debe venir un motivo.
+        """
+        estado = attrs.get("estado") or getattr(self.instance, "estado", None)
+        motivo = attrs.get("motivo_inasistencia") or getattr(self.instance, "motivo_inasistencia", "")
 
-class AsistenciaCreateUpdateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Asistencia
-        fields = "__all__"
-
-    def validate(self, data):
-        if data["fecha"] > timezone.now().date():
-            raise serializers.ValidationError("La fecha no puede ser futura.")
-        return data
+        if estado == "JUSTIFICADO" and not motivo:
+            raise serializers.ValidationError(
+                {"motivo_inasistencia": "Debe especificar un motivo para una inasistencia justificada."}
+            )
+        return attrs
 
 
 # ============================================================
-#  EVALUACIONES
+#  EVALUACIONES Y CALIFICACIONES
 # ============================================================
 
 class EvaluacionSerializer(serializers.ModelSerializer):
-    asignacion = ACDSerializer(read_only=True)
-    periodo = PeriodoAcademicoSerializer(read_only=True)
-    creado_por = UserSerializer(read_only=True)
+    curso_detalle = CursoSerializer(source="curso", read_only=True)
+    asignatura_detalle = AsignaturaSerializer(source="asignatura", read_only=True)
+    docente_detalle = UsuarioSimpleSerializer(source="docente", read_only=True)
+    periodo_detalle = PeriodoAcademicoSerializer(source="periodo", read_only=True)
+
+    estado_display = serializers.CharField(source="get_estado_display", read_only=True)
+    tipo_display = serializers.CharField(source="get_tipo_display", read_only=True)
+
+    # Ejemplo de campo calculado: cantidad de calificaciones asociadas
+    cantidad_calificaciones = serializers.SerializerMethodField()
 
     class Meta:
         model = Evaluacion
-        fields = "__all__"
+        fields = (
+            "id",
+            "curso",
+            "curso_detalle",
+            "asignatura",
+            "asignatura_detalle",
+            "docente",
+            "docente_detalle",
+            "periodo",
+            "periodo_detalle",
+            "titulo",
+            "descripcion",
+            "tipo",
+            "tipo_display",
+            "fecha_evaluacion",
+            "fecha_limite_publicacion",
+            "fecha_publicacion",
+            "estado",
+            "estado_display",
+            "ponderacion",
+            "creado_en",
+            "actualizado_en",
+            "cantidad_calificaciones",
+        )
+        read_only_fields = ("creado_en", "actualizado_en")
 
+    def get_cantidad_calificaciones(self, obj):
+        return obj.calificaciones.count()
 
-class EvaluacionCreateUpdateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Evaluacion
-        fields = "__all__"
+    def validate(self, attrs):
+        """
+        Asegura que la fecha límite de publicación no sea menor a la fecha de evaluación.
+        (Esto ya está en clean(), pero lo reforzamos a nivel de serializer para mejores mensajes).
+        """
+        fecha_eval = attrs.get("fecha_evaluacion") or getattr(self.instance, "fecha_evaluacion", None)
+        fecha_limite = attrs.get("fecha_limite_publicacion") or getattr(
+            self.instance, "fecha_limite_publicacion", None
+        )
 
-    def validate(self, data):
-        if data["fecha"] > timezone.now().date():
-            raise serializers.ValidationError("La fecha de la evaluación no puede ser futura.")
-        if data["ponderacion"] <= 0:
-            raise serializers.ValidationError("La ponderación debe ser mayor a cero.")
-        return data
+        if fecha_eval and fecha_limite and fecha_limite < fecha_eval:
+            raise serializers.ValidationError(
+                {"fecha_limite_publicacion": "La fecha límite no puede ser anterior a la fecha de evaluación."}
+            )
+        return attrs
 
-
-# ============================================================
-#  CALIFICACIONES
-# ============================================================
 
 class CalificacionSerializer(serializers.ModelSerializer):
-    estudiante = UserSerializer(read_only=True)
-    evaluacion = EvaluacionSerializer(read_only=True)
-    registrado_por = UserSerializer(read_only=True)
-
-    porcentaje = serializers.DecimalField(
-        max_digits=6, decimal_places=2, read_only=True
-    )
+    evaluacion_detalle = EvaluacionSerializer(source="evaluacion", read_only=True)
+    estudiante_detalle = UsuarioSimpleSerializer(source="estudiante", read_only=True)
 
     class Meta:
         model = Calificacion
-        fields = "__all__"
+        fields = (
+            "id",
+            "evaluacion",
+            "evaluacion_detalle",
+            "estudiante",
+            "estudiante_detalle",
+            "nota",
+            "observaciones",
+            "fecha_registro",
+            "origen",
+        )
+        read_only_fields = ("fecha_registro",)
 
+    def validate_nota(self, value):
+        if value < 1.0 or value > 7.0:
+            # Aunque el modelo ya tiene validators, damos un mensaje claro desde el serializer.
+            raise serializers.ValidationError("La nota debe estar en el rango 1.0 a 7.0.")
+        return value
 
-class CalificacionCreateUpdateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Calificacion
-        fields = "__all__"
-
-    def validate(self, data):
-        evaluacion = data["evaluacion"]
-        puntaje = data["puntaje_obtenido"]
-
-        if puntaje < 0:
-            raise serializers.ValidationError("El puntaje no puede ser menor a 0.")
-        if puntaje > evaluacion.puntaje_maximo:
-            raise serializers.ValidationError("El puntaje excede el máximo permitido.")
-
-        return data
-
-
-# ============================================================
-#  PROMEDIO FINAL
-# ============================================================
 
 class PromedioFinalSerializer(serializers.ModelSerializer):
-    estudiante = UserSerializer(read_only=True)
-    asignacion = ACDSerializer(read_only=True)
-    periodo = PeriodoAcademicoSerializer(read_only=True)
+    estudiante_detalle = UsuarioSimpleSerializer(source="estudiante", read_only=True)
+    curso_detalle = CursoSerializer(source="curso", read_only=True)
+    asignatura_detalle = AsignaturaSerializer(source="asignatura", read_only=True)
+    periodo_detalle = PeriodoAcademicoSerializer(source="periodo", read_only=True)
 
     class Meta:
         model = PromedioFinal
-        fields = "__all__"
-
-
-class PromedioFinalCreateUpdateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = PromedioFinal
-        fields = "__all__"
+        fields = (
+            "id",
+            "estudiante",
+            "estudiante_detalle",
+            "curso",
+            "curso_detalle",
+            "asignatura",
+            "asignatura_detalle",
+            "periodo",
+            "periodo_detalle",
+            "promedio",
+            "aprobado",
+            "fecha_calculo",
+        )
+        read_only_fields = ("fecha_calculo",)
 
 
 # ============================================================
-#  OBSERVACIONES (DISCIPLINARIAS Y ACADÉMICAS)
+#  OBSERVACIONES, ALERTAS, INTERVENCIONES
 # ============================================================
 
 class ObservacionSerializer(serializers.ModelSerializer):
-    estudiante = UserSerializer(read_only=True)
-    curso = CursoSerializer(read_only=True)
-    registrada_por = UserSerializer(read_only=True)
+    estudiante_detalle = UsuarioSimpleSerializer(source="estudiante", read_only=True)
+    autor_detalle = UsuarioSimpleSerializer(source="autor", read_only=True)
+    curso_detalle = CursoSerializer(source="curso", read_only=True)
+    asignatura_detalle = AsignaturaSerializer(source="asignatura", read_only=True)
 
-    tipo_nombre = serializers.CharField(source="get_tipo_display", read_only=True)
-    gravedad_nombre = serializers.CharField(source="get_gravedad_display", read_only=True)
+    tipo_display = serializers.CharField(source="get_tipo_display", read_only=True)
+    gravedad_display = serializers.CharField(source="get_gravedad_display", read_only=True)
 
     class Meta:
         model = Observacion
-        fields = "__all__"
+        fields = (
+            "id",
+            "estudiante",
+            "estudiante_detalle",
+            "autor",
+            "autor_detalle",
+            "curso",
+            "curso_detalle",
+            "asignatura",
+            "asignatura_detalle",
+            "tipo",
+            "tipo_display",
+            "gravedad",
+            "gravedad_display",
+            "descripcion",
+            "requiere_seguimiento",
+            "fecha",
+            "fecha_registro",
+        )
+        read_only_fields = ("fecha_registro",)
 
 
-class ObservacionCreateUpdateSerializer(serializers.ModelSerializer):
+class AlertaTempranaSerializer(serializers.ModelSerializer):
+    estudiante_detalle = UsuarioSimpleSerializer(source="estudiante", read_only=True)
+    curso_detalle = CursoSerializer(source="curso", read_only=True)
+    creada_por_detalle = UsuarioSimpleSerializer(source="creada_por", read_only=True)
+
+    origen_display = serializers.CharField(source="get_origen_display", read_only=True)
+    estado_display = serializers.CharField(source="get_estado_display", read_only=True)
+
     class Meta:
-        model = Observacion
-        fields = "__all__"
+        model = AlertaTemprana
+        fields = (
+            "id",
+            "estudiante",
+            "estudiante_detalle",
+            "curso",
+            "curso_detalle",
+            "origen",
+            "origen_display",
+            "descripcion",
+            "nivel_riesgo",
+            "estado",
+            "estado_display",
+            "creada_por",
+            "creada_por_detalle",
+            "fecha_creacion",
+            "fecha_cierre",
+        )
+        read_only_fields = ("fecha_creacion",)
+
+
+class IntervencionSerializer(serializers.ModelSerializer):
+    estudiante_detalle = UsuarioSimpleSerializer(source="estudiante", read_only=True)
+    alerta_detalle = AlertaTempranaSerializer(source="alerta", read_only=True)
+    observacion_detalle = ObservacionSerializer(source="observacion", read_only=True)
+    responsable_detalle = UsuarioSimpleSerializer(source="responsable", read_only=True)
+
+    estado_display = serializers.CharField(source="get_estado_display", read_only=True)
+
+    class Meta:
+        model = Intervencion
+        fields = (
+            "id",
+            "estudiante",
+            "estudiante_detalle",
+            "alerta",
+            "alerta_detalle",
+            "observacion",
+            "observacion_detalle",
+            "responsable",
+            "responsable_detalle",
+            "descripcion",
+            "fecha",
+            "estado",
+            "estado_display",
+            "resultado",
+        )
 
 
 # ============================================================
-#  CORREOS AUTOMÁTICOS (COLA DE ENVÍO)
-# ============================================================
-
-class EmailQueueSerializer(serializers.ModelSerializer):
-    destinatario_usuario = UserSerializer(read_only=True)
-    destinatario_curso = CursoSerializer(read_only=True)
-
-    class Meta:
-        model = EmailQueue
-        fields = "__all__"
-
-
-class EmailQueueCreateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = EmailQueue
-        fields = "__all__"
-
-
-# ============================================================
-#  REUNIONES DE APODERADOS
+#  REUNIONES CON APODERADOS Y MINUTAS
 # ============================================================
 
 class ReunionApoderadosSerializer(serializers.ModelSerializer):
-    curso = CursoSerializer(read_only=True)
-    docente = UserSerializer(read_only=True)
+    curso_detalle = CursoSerializer(source="curso", read_only=True)
+    estudiante_detalle = UsuarioSimpleSerializer(source="estudiante", read_only=True)
+    apoderado_detalle = UsuarioSimpleSerializer(source="apoderado", read_only=True)
+    docente_detalle = UsuarioSimpleSerializer(source="docente", read_only=True)
+
+    tipo_display = serializers.CharField(source="get_tipo_display", read_only=True)
 
     class Meta:
         model = ReunionApoderados
-        fields = "__all__"
+        fields = (
+            "id",
+            "tipo",
+            "tipo_display",
+            "curso",
+            "curso_detalle",
+            "estudiante",
+            "estudiante_detalle",
+            "apoderado",
+            "apoderado_detalle",
+            "docente",
+            "docente_detalle",
+            "fecha",
+            "hora_inicio",
+            "hora_fin",
+            "temas_tratados",
+            "acuerdos",
+            "observaciones",
+            "creada_en",
+        )
+        read_only_fields = ("creada_en",)
 
 
-class ReunionApoderadosCreateUpdateSerializer(serializers.ModelSerializer):
+class MinutaReunionSerializer(serializers.ModelSerializer):
+    reunion_detalle = ReunionApoderadosSerializer(source="reunion", read_only=True)
+    autor_detalle = UsuarioSimpleSerializer(source="autor", read_only=True)
+
     class Meta:
-        model = ReunionApoderados
-        fields = "__all__"
+        model = MinutaReunion
+        fields = (
+            "id",
+            "reunion",
+            "reunion_detalle",
+            "autor",
+            "autor_detalle",
+            "titulo",
+            "resumen_general",
+            "acuerdos_detallados",
+            "compromisos_apoderados",
+            "compromisos_establecimiento",
+            "observaciones",
+            "archivo_pdf",
+            "creada_en",
+            "actualizada_en",
+        )
+        read_only_fields = ("creada_en", "actualizada_en")
 
 
-class AsistenciaReunionSerializer(serializers.ModelSerializer):
-    reunion = ReunionApoderadosSerializer(read_only=True)
-    apoderado = UserSerializer(read_only=True)
+class AsistenciaReunionApoderadoSerializer(serializers.ModelSerializer):
+    reunion_detalle = ReunionApoderadosSerializer(source="reunion", read_only=True)
+    apoderado_detalle = UsuarioSimpleSerializer(source="apoderado", read_only=True)
+    estudiante_detalle = UsuarioSimpleSerializer(source="estudiante", read_only=True)
 
     class Meta:
         model = AsistenciaReunionApoderado
-        fields = "__all__"
-
-
-class AsistenciaReunionCreateUpdateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = AsistenciaReunionApoderado
-        fields = "__all__"
-
-
-# ============================================================
-#  ALERTAS TEMPRANAS (RIESGO ACADÉMICO)
-# ============================================================
-
-class AlertaTempranaSerializer(serializers.ModelSerializer):
-    estudiante = UserSerializer(read_only=True)
-    curso = CursoSerializer(read_only=True)
-    generada_por = UserSerializer(read_only=True)
-
-    class Meta:
-        model = AlertaTemprana
-        fields = "__all__"
-
-
-class AlertaTempranaCreateUpdateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = AlertaTemprana
-        fields = "__all__"
+        fields = (
+            "id",
+            "reunion",
+            "reunion_detalle",
+            "apoderado",
+            "apoderado_detalle",
+            "estudiante",
+            "estudiante_detalle",
+            "asistio",
+            "justificacion",
+            "temas_tratados",
+            "fecha_registro",
+        )
+        read_only_fields = ("fecha_registro",)
 
 
 # ============================================================
-#  REPORTE DE NOTAS POR PERIODO
+#  REPORTES, ADJUNTOS Y COLA DE CORREOS
 # ============================================================
 
 class ReporteNotasPeriodoSerializer(serializers.ModelSerializer):
-    estudiante = UserSerializer(read_only=True)
-    periodo = PeriodoAcademicoSerializer(read_only=True)
+    curso_detalle = CursoSerializer(source="curso", read_only=True)
+    asignatura_detalle = AsignaturaSerializer(source="asignatura", read_only=True)
+    periodo_detalle = PeriodoAcademicoSerializer(source="periodo", read_only=True)
+    generado_por_detalle = UsuarioSimpleSerializer(source="generado_por", read_only=True)
 
     class Meta:
         model = ReporteNotasPeriodo
-        fields = "__all__"
+        fields = (
+            "id",
+            "curso",
+            "curso_detalle",
+            "asignatura",
+            "asignatura_detalle",
+            "periodo",
+            "periodo_detalle",
+            "generado_por",
+            "generado_por_detalle",
+            "fecha_generacion",
+            "archivo_pdf",
+            "archivo_excel",
+        )
+        read_only_fields = ("fecha_generacion",)
 
 
-class ReporteNotasPeriodoCreateUpdateSerializer(serializers.ModelSerializer):
+class ArchivoAdjuntoSerializer(serializers.ModelSerializer):
+    subido_por_detalle = UsuarioSimpleSerializer(source="subido_por", read_only=True)
+    # content_type y object_id se suelen tratar como internos del sistema
+    # y no se exponen directamente al front, pero los dejamos por si los necesitas.
+
     class Meta:
-        model = ReporteNotasPeriodo
-        fields = "__all__"
+        model = ArchivoAdjunto
+        fields = (
+            "id",
+            "content_type",
+            "object_id",
+            "archivo",
+            "descripcion",
+            "subido_por",
+            "subido_por_detalle",
+            "fecha_subida",
+        )
+        read_only_fields = ("fecha_subida",)
+
+
+class EmailQueueSerializer(serializers.ModelSerializer):
+    estado_display = serializers.CharField(source="get_estado_display", read_only=True)
+
+    class Meta:
+        model = EmailQueue
+        fields = (
+            "id",
+            "destinatario",
+            "asunto",
+            "cuerpo",
+            "creado_en",
+            "enviar_despues_de",
+            "estado",
+            "estado_display",
+            "ultimo_error",
+        )
+        read_only_fields = ("creado_en", "ultimo_error")

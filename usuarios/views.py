@@ -1,14 +1,11 @@
-# usuarios/views.py
+from django.utils.dateparse import parse_datetime
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 
-from datetime import timedelta
-
-from django.contrib.auth import authenticate, login, logout
-from django.utils import timezone
-from django.db import models  # Para Q en filtros
-
-from rest_framework import status, generics, permissions
+from rest_framework import viewsets, status, permissions, filters
+from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.views import APIView
+from rest_framework.exceptions import PermissionDenied
 
 from .models import (
     User,
@@ -27,702 +24,506 @@ from .serializers import (
     NotificationSerializer,
     ActivityLogSerializer,
 )
+from .permissions import (
+    IsAdminRole,
+    IsInstitutionalStaff,
+    IsOwnerOrAdmin,
+    IsActiveUser,
+)
 
 
 # ============================================================
-#  PERMISOS PERSONALIZADOS POR ROL
+#  HELPER PARA LOGS DE ACTIVIDAD
 # ============================================================
 
-class IsAdminRole(permissions.BasePermission):
-    """Permite acceso solo a usuarios con rol Administrador."""
-
-    def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated
-            and request.user.role
-            and request.user.role.code == "ADMIN"
-        )
-
-
-class IsDirectorRole(permissions.BasePermission):
-    """Permite acceso solo a usuarios con rol Director."""
-
-    def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated
-            and request.user.role
-            and request.user.role.code == "DIRECTOR"
-        )
-
-
-class IsDocenteRole(permissions.BasePermission):
-    """Permite acceso solo a usuarios con rol Docente."""
-
-    def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated
-            and request.user.role
-            and request.user.role.code == "DOCENTE"
-        )
-
-
-class IsAlumnoRole(permissions.BasePermission):
-    """Permite acceso solo a usuarios con rol Alumno."""
-
-    def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated
-            and request.user.role
-            and request.user.role.code == "ALUMNO"
-        )
-
-
-class IsApoderadoRole(permissions.BasePermission):
-    """Permite acceso solo a usuarios con rol Apoderado."""
-
-    def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated
-            and request.user.role
-            and request.user.role.code == "APODERADO"
-        )
-
-
-class IsAdminOrDirector(permissions.BasePermission):
-    """Permite acceso solo a Administradores o Directores."""
-
-    def has_permission(self, request, view):
-        return (
-            request.user.is_authenticated
-            and request.user.role
-            and request.user.role.code in ("ADMIN", "DIRECTOR")
-        )
-
-
-# ============================================================
-#  AUTENTICACIÓN: LOGIN / LOGOUT
-# ============================================================
-
-class LoginView(APIView):
+def crear_log_actividad(actor: User, accion: str, request=None):
     """
-    Inicio de sesión con:
-    - Validación de credenciales
-    - Bloqueo temporal tras múltiples intentos fallidos
-    - Registro de actividad
+    Registra acciones relevantes realizadas por usuarios.
     """
+    ip = None
+    ua = ""
+    if request is not None:
+        ip = request.META.get("REMOTE_ADDR")
+        ua = request.META.get("HTTP_USER_AGENT", "")
 
-    permission_classes = [permissions.AllowAny]
-
-    def post(self, request):
-        username = request.data.get("username")
-        password = request.data.get("password")
-        ip = request.META.get("REMOTE_ADDR", None)
-
-        if not username or not password:
-            return Response(
-                {"detail": "Debe enviar username y password."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Validar bloqueo temporal
-        user_obj = None
-        try:
-            user_obj = User.objects.get(username=username)
-            if user_obj.is_temporarily_blocked() or user_obj.is_blocked:
-                return Response(
-                    {"detail": "Usuario bloqueado temporalmente. Intente más tarde."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-        except User.DoesNotExist:
-            pass
-
-        user = authenticate(request, username=username, password=password)
-
-        if not user:
-            # Manejo de intentos fallidos
-            if user_obj:
-                user_obj.failed_attempts += 1
-                if user_obj.failed_attempts >= 5:
-                    user_obj.is_blocked = True
-                    user_obj.blocked_until = timezone.now() + timedelta(minutes=30)
-                user_obj.save()
-
-                UserActivityLog.objects.create(
-                    user=user_obj,
-                    action="Intento de inicio de sesión fallido",
-                    ip_address=ip,
-                    user_agent=request.headers.get("User-Agent", ""),
-                )
-
-            return Response(
-                {"detail": "Credenciales inválidas."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-
-        # Reset de intentos fallidos
-        user.failed_attempts = 0
-        user.last_login_ip = ip
-        user.save()
-
-        # Registrar actividad
+    # Si aún no hay actor (por algún contexto extraño) no registrar
+    if actor and actor.is_authenticated:
         UserActivityLog.objects.create(
-            user=user,
-            action="Inicio de sesión",
+            user=actor,
+            action=accion,
             ip_address=ip,
-            user_agent=request.headers.get("User-Agent", ""),
+            user_agent=ua,
         )
-
-        login(request, user)
-        return Response({"detail": "Inicio de sesión exitoso."})
-
-
-class LogoutView(APIView):
-    """
-    Cierre de sesión con registro de actividad.
-    """
-
-    permission_classes = [permissions.IsAuthenticated]
-
-    def post(self, request):
-        UserActivityLog.objects.create(
-            user=request.user,
-            action="Cierre de sesión",
-            ip_address=request.META.get("REMOTE_ADDR", None),
-            user_agent=request.headers.get("User-Agent", ""),
-        )
-        logout(request)
-        return Response({"detail": "Sesión cerrada correctamente."})
 
 
 # ============================================================
-#  GESTIÓN DE USUARIOS (CRUD + BÚSQUEDA)
+#  USER VIEWSET (CRUD + ACCIONES ESPECIALES)
 # ============================================================
 
-class UserListCreateView(generics.ListCreateAPIView):
+class UserViewSet(viewsets.ModelViewSet):
     """
-    Listado y creación de usuarios.
+    Gestión completa de usuarios institucionales.
 
-    - GET: cualquier usuario autenticado puede listar (política básica, luego puedes limitar).
-    - POST: solo Administrador / Director pueden crear usuarios.
+    Acciones estándar:
+    - list      (GET /api/usuarios/)                  -> ADMIN/DIRECTOR
+    - create    (POST /api/usuarios/)                 -> ADMIN/DIRECTOR
+    - retrieve  (GET /api/usuarios/{id}/)             -> dueño o ADMIN
+    - update    (PUT /api/usuarios/{id}/)             -> dueño o ADMIN
+    - partial_update (PATCH /api/usuarios/{id}/)      -> dueño o ADMIN
+    - destroy   (DELETE /api/usuarios/{id}/)          -> solo ADMIN, respetando jerarquía
 
-    Filtros:
-    - ?search=
-    - ?role=ADMIN/DIRECTOR/DOCENTE/ALUMNO/APODERADO
-    - ?active=true/false
+    Acciones extra:
+    - me                        (GET  /api/usuarios/me/)
+    - change-password           (POST /api/usuarios/change-password/)
+    - bloquear                  (POST /api/usuarios/{id}/bloquear/)
+    - desbloquear               (POST /api/usuarios/{id}/desbloquear/)
+    - reset-password            (POST /api/usuarios/{id}/reset-password/)
+    - force-password-change     (POST /api/usuarios/{id}/force-password-change/)
+    - asignar-apoderados        (POST /api/usuarios/{id}/asignar-apoderados/)
+    - asignar-alumnos           (POST /api/usuarios/{id}/asignar-alumnos/)
+    - actividad                 (GET  /api/usuarios/{id}/actividad/)
     """
 
-    queryset = User.objects.all().select_related("role").prefetch_related(
-        "groups_institutional", "extra_permissions"
-    )
+    queryset = User.objects.select_related("role").prefetch_related(
+        "groups_institutional", "extra_permissions", "alumnos", "apoderados"
+    ).order_by("username")
 
-    def get_permissions(self):
-        if self.request.method == "POST":
-            return [permissions.IsAuthenticated(), IsAdminOrDirector()]
-        return [permissions.IsAuthenticated()]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ["username", "first_name", "last_name", "rut", "email"]
+    ordering_fields = ["username", "first_name", "last_name", "created_at"]
+    ordering = ["username"]
 
     def get_serializer_class(self):
-        if self.request.method == "POST":
+        if self.action in ["create", "update", "partial_update"]:
             return UserCreateSerializer
         return UserSerializer
 
-    def get_queryset(self):
-        qs = super().get_queryset()
+    def get_permissions(self):
+        """
+        Permisos por acción.
+        """
+        if self.action in ["list", "create"]:
+            perms = [permissions.IsAuthenticated, IsInstitutionalStaff, IsActiveUser]
+        elif self.action in [
+            "destroy",
+            "bloquear",
+            "desbloquear",
+            "reset_password",
+            "force_password_change",
+            "asignar_apoderados",
+            "asignar_alumnos",
+            "actividad",
+        ]:
+            perms = [permissions.IsAuthenticated, IsAdminRole, IsActiveUser]
+        elif self.action in ["retrieve", "update", "partial_update"]:
+            # Dueño o admin
+            perms = [permissions.IsAuthenticated, IsOwnerOrAdmin, IsActiveUser]
+        elif self.action in ["me", "change_password"]:
+            perms = [permissions.IsAuthenticated, IsActiveUser]
+        else:
+            perms = [permissions.IsAuthenticated, IsActiveUser]
+        return [p() for p in perms]
 
-        search = self.request.query_params.get("search")
-        role_code = self.request.query_params.get("role")
-        active = self.request.query_params.get("active")
-
-        if search:
-            qs = qs.filter(
-                models.Q(first_name__icontains=search)
-                | models.Q(last_name__icontains=search)
-                | models.Q(username__icontains=search)
-                | models.Q(email__icontains=search)
-            )
-
-        if role_code:
-            qs = qs.filter(role__code=role_code)
-
-        if active is not None:
-            if active.lower() == "true":
-                qs = qs.filter(active=True)
-            elif active.lower() == "false":
-                qs = qs.filter(active=False)
-
-        return qs
+    # --------------------------------------------------------
+    # HOOKS DE CREACIÓN / ACTUALIZACIÓN / ELIMINACIÓN
+    # --------------------------------------------------------
 
     def perform_create(self, serializer):
         user = serializer.save()
-        UserActivityLog.objects.create(
-            user=self.request.user,
-            action=f"Creó usuario: {user.username}",
-            ip_address=self.request.META.get("REMOTE_ADDR", None),
-            user_agent=self.request.headers.get("User-Agent", ""),
-        )
-
-
-class UserDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """
-    Ver, actualizar o eliminar un usuario específico.
-
-    - GET: ver detalle
-    - PUT/PATCH: actualizar datos
-    - DELETE: eliminar usuario
-    """
-
-    queryset = User.objects.all().select_related("role").prefetch_related(
-        "groups_institutional", "extra_permissions"
-    )
-
-    def get_permissions(self):
-        # Solo Admin/Director pueden modificar o eliminar usuarios
-        if self.request.method in ("PUT", "PATCH", "DELETE"):
-            return [permissions.IsAuthenticated(), IsAdminOrDirector()]
-        return [permissions.IsAuthenticated()]
-
-    def get_serializer_class(self):
-        if self.request.method in ("PUT", "PATCH"):
-            return UserCreateSerializer
-        return UserSerializer
+        crear_log_actividad(self.request.user, f"Creación de usuario {user.username}", self.request)
 
     def perform_update(self, serializer):
-        user_updated = serializer.save()
-        UserActivityLog.objects.create(
-            user=self.request.user,
-            action=f"Actualizó usuario: {user_updated.username}",
-            ip_address=self.request.META.get("REMOTE_ADDR", None),
-            user_agent=self.request.headers.get("User-Agent", ""),
-        )
+        user = serializer.save()
+        crear_log_actividad(self.request.user, f"Actualización de usuario ID {user.id}", self.request)
 
     def perform_destroy(self, instance):
-        username = instance.username
+        req_user = self.request.user
+
+        if req_user.role and instance.role:
+            # Jerarquía: número menor = más poder
+            if req_user.role.hierarchy > instance.role.hierarchy:
+                raise PermissionDenied("No puedes eliminar a un usuario con mayor jerarquía.")
+
+        crear_log_actividad(req_user, f"Eliminación de usuario ID {instance.id}", self.request)
         instance.delete()
-        UserActivityLog.objects.create(
-            user=self.request.user,
-            action=f"Eliminó usuario: {username}",
-            ip_address=self.request.META.get("REMOTE_ADDR", None),
-            user_agent=self.request.headers.get("User-Agent", ""),
-        )
 
+    # --------------------------------------------------------
+    #  /me
+    # --------------------------------------------------------
 
-# ============================================================
-#  PERFIL DEL USUARIO AUTENTICADO
-# ============================================================
-
-class MeView(APIView):
-    """
-    Ver y actualizar el perfil del usuario autenticado.
-    - GET: devuelve el perfil del usuario logueado.
-    - PATCH: actualizar datos personales (no rol ni permisos).
-    """
-
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get(self, request):
-        serializer = UserSerializer(request.user)
+    @action(detail=False, methods=["get"], url_path="me")
+    def me(self, request):
+        """
+        Devuelve el perfil del usuario autenticado.
+        """
+        serializer = UserSerializer(request.user, context={"request": request})
         return Response(serializer.data)
 
-    def patch(self, request):
-        # Solo permitir ciertos campos de actualización
-        allowed_fields = {
-            "first_name",
-            "last_name",
-            "email",
-            "phone",
-            "address",
-            "gender",
-            "birth_date",
-            "profile_image",
+    # --------------------------------------------------------
+    #  change-password (usuario cambia SU propia contraseña)
+    # --------------------------------------------------------
+
+    @action(detail=False, methods=["post"], url_path="change-password")
+    def change_password(self, request):
+        """
+        Permite al usuario autenticado cambiar su contraseña.
+
+        Body:
+        {
+            "old_password": "...",
+            "new_password": "..."
         }
-        data = {k: v for k, v in request.data.items() if k in allowed_fields}
-
-        serializer = UserCreateSerializer(
-            request.user, data=data, partial=True
-        )
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-
-        UserActivityLog.objects.create(
-            user=request.user,
-            action="Actualizó su propio perfil",
-            ip_address=request.META.get("REMOTE_ADDR", None),
-            user_agent=request.headers.get("User-Agent", ""),
-        )
-
-        return Response(UserSerializer(request.user).data)
-
-
-# ============================================================
-#  VISTAS ESPECÍFICAS PARA ALUMNO / APODERADO
-# ============================================================
-
-class MisAlumnosView(APIView):
-    """
-    Para APODERADO:
-    Lista los alumnos asociados a él.
-    """
-
-    permission_classes = [permissions.IsAuthenticated, IsApoderadoRole]
-
-    def get(self, request):
-        alumnos = request.user.alumnos.all()
-        serializer = UserSerializer(alumnos, many=True)
-        return Response(serializer.data)
-
-
-class MisApoderadosView(APIView):
-    """
-    Para ALUMNO:
-    Lista los apoderados asociados al alumno.
-    """
-
-    permission_classes = [permissions.IsAuthenticated, IsAlumnoRole]
-
-    def get(self, request):
-        apoderados = request.user.apoderados.all()
-        serializer = UserSerializer(apoderados, many=True)
-        return Response(serializer.data)
-
-
-# ============================================================
-#  CAMBIO Y REINICIO DE CONTRASEÑA
-# ============================================================
-
-class ChangePasswordView(APIView):
-    """
-    Cambio de contraseña por el propio usuario.
-    - Requiere old_password y new_password.
-    """
-
-    permission_classes = [permissions.IsAuthenticated]
-
-    def post(self, request):
+        """
+        user = request.user
         old_password = request.data.get("old_password")
         new_password = request.data.get("new_password")
 
         if not old_password or not new_password:
             return Response(
-                {"detail": "Debe enviar old_password y new_password."},
+                {"detail": "Debe proporcionar 'old_password' y 'new_password'."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not request.user.check_password(old_password):
+        if not user.check_password(old_password):
             return Response(
                 {"detail": "La contraseña actual no es correcta."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        request.user.set_password(new_password)
-        request.user.must_change_password = False
-        request.user.save()
+        try:
+            validate_password(new_password, user=user)
+        except ValidationError as e:
+            return Response(
+                {"detail": list(e.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        UserActivityLog.objects.create(
-            user=request.user,
-            action="Cambió su contraseña",
-            ip_address=request.META.get("REMOTE_ADDR", None),
-            user_agent=request.headers.get("User-Agent", ""),
-        )
+        user.set_password(new_password)
+        user.must_change_password = False
+        user.save()
 
-        return Response({"detail": "Contraseña actualizada correctamente."})
+        crear_log_actividad(user, "Cambio de contraseña propio.", request)
+        return Response({"detail": "Contraseña actualizada correctamente."}, status=status.HTTP_200_OK)
 
+    # --------------------------------------------------------
+    #  BLOQUEAR / DESBLOQUEAR
+    # --------------------------------------------------------
 
-class AdminResetPasswordView(APIView):
-    """
-    Reinicio de contraseña por parte de Administrador/Director.
-    - Recibe user_id y new_password.
-    """
+    @action(detail=True, methods=["post"], url_path="bloquear")
+    def bloquear(self, request, pk=None):
+        """
+        Bloquea a un usuario.
+        Opcional:
+        - blocked_until: fecha/hora en formato ISO 8601
+        """
+        user = self.get_object()
 
-    permission_classes = [permissions.IsAuthenticated, IsAdminOrDirector]
+        if user.id == request.user.id:
+            return Response(
+                {"detail": "No puedes bloquear tu propia cuenta."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-    def post(self, request):
-        user_id = request.data.get("user_id")
+        # Validar jerarquía
+        if request.user.role and user.role:
+            if request.user.role.hierarchy > user.role.hierarchy:
+                return Response(
+                    {"detail": "No puedes bloquear a un usuario con mayor jerarquía."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        blocked_until_str = request.data.get("blocked_until")
+        if blocked_until_str:
+            dt = parse_datetime(blocked_until_str)
+            if not dt:
+                return Response(
+                    {"detail": "Formato de fecha inválido para 'blocked_until'."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            user.blocked_until = dt
+
+        user.is_blocked = True
+        user.save()
+
+        crear_log_actividad(request.user, f"Usuario ID {user.id} bloqueado.", request)
+        return Response({"detail": "Usuario bloqueado correctamente."}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="desbloquear")
+    def desbloquear(self, request, pk=None):
+        """
+        Desbloquea a un usuario.
+        """
+        user = self.get_object()
+
+        user.is_blocked = False
+        user.blocked_until = None
+        user.save()
+
+        crear_log_actividad(request.user, f"Usuario ID {user.id} desbloqueado.", request)
+        return Response({"detail": "Usuario desbloqueado correctamente."}, status=status.HTTP_200_OK)
+
+    # --------------------------------------------------------
+    #  RESET PASSWORD / FORCE PASSWORD CHANGE
+    # --------------------------------------------------------
+
+    @action(detail=True, methods=["post"], url_path="reset-password")
+    def reset_password(self, request, pk=None):
+        """
+        Reinicia la contraseña de un usuario.
+        Solo ADMIN.
+
+        Body:
+        {
+            "new_password": "..."
+        }
+        """
+        user = self.get_object()
         new_password = request.data.get("new_password")
 
-        if not user_id or not new_password:
+        if user.id == request.user.id:
             return Response(
-                {"detail": "Debe enviar user_id y new_password."},
+                {"detail": "No puedes reiniciar tu propia contraseña usando este endpoint."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not new_password:
+            return Response(
+                {"detail": "Debes proporcionar 'new_password'."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
+            validate_password(new_password, user=user)
+        except ValidationError as e:
             return Response(
-                {"detail": "Usuario no encontrado."},
-                status=status.HTTP_404_NOT_FOUND,
+                {"detail": list(e.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         user.set_password(new_password)
         user.must_change_password = True
         user.save()
 
-        UserActivityLog.objects.create(
-            user=request.user,
-            action=f"Reinició la contraseña del usuario {user.username}",
-            ip_address=request.META.get("REMOTE_ADDR", None),
-            user_agent=request.headers.get("User-Agent", ""),
+        crear_log_actividad(request.user, f"Reset de contraseña de usuario ID {user.id}.", request)
+        return Response({"detail": "Contraseña restablecida correctamente."}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="force-password-change")
+    def force_password_change(self, request, pk=None):
+        """
+        Marca al usuario para que deba cambiar su contraseña
+        en el próximo inicio de sesión.
+        """
+        user = self.get_object()
+        user.must_change_password = True
+        user.save()
+
+        crear_log_actividad(
+            request.user,
+            f"Marcado cambio obligatorio de contraseña para usuario ID {user.id}.",
+            request,
         )
 
-        return Response({"detail": "Contraseña reiniciada exitosamente."})
+        return Response(
+            {"detail": "Se ha forzado el cambio de contraseña para este usuario."},
+            status=status.HTTP_200_OK,
+        )
 
+    # --------------------------------------------------------
+    #  ASIGNAR APODERADOS / ALUMNOS
+    # --------------------------------------------------------
 
-# ============================================================
-#  GESTIÓN DE ROLES
-# ============================================================
+    @action(detail=True, methods=["post"], url_path="asignar-apoderados")
+    def asignar_apoderados(self, request, pk=None):
+        """
+        Asigna apoderados a un alumno.
 
-class RoleListCreateView(generics.ListCreateAPIView):
-    """
-    Listar y crear roles.
-    - Solo Administrador puede crear nuevos roles.
-    """
+        Body:
+        {
+            "apoderado_ids": [1, 2, 3]
+        }
+        """
+        alumno = self.get_object()
 
-    queryset = Role.objects.all()
-    serializer_class = RoleSerializer
-
-    def get_permissions(self):
-        if self.request.method == "POST":
-            return [permissions.IsAuthenticated(), IsAdminRole()]
-        return [permissions.IsAuthenticated()]
-
-
-class RoleDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """
-    Ver, actualizar o eliminar un rol.
-    - Solo Administrador.
-    """
-
-    queryset = Role.objects.all()
-    serializer_class = RoleSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
-
-
-# ============================================================
-#  GESTIÓN DE PERMISOS EXTRA
-# ============================================================
-
-class CustomPermissionListCreateView(generics.ListCreateAPIView):
-    """
-    Listar y crear permisos extra.
-    - Solo Administrador.
-    """
-
-    queryset = CustomPermission.objects.all()
-    serializer_class = CustomPermissionSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
-
-
-class CustomPermissionDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """
-    Ver, actualizar y eliminar permisos extra.
-    - Solo Administrador.
-    """
-
-    queryset = CustomPermission.objects.all()
-    serializer_class = CustomPermissionSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
-
-
-# ============================================================
-#  GESTIÓN DE GRUPOS INSTITUCIONALES
-# ============================================================
-
-class GroupListCreateView(generics.ListCreateAPIView):
-    """
-    Listar y crear grupos institucionales (cursos, talleres, etc.).
-    - Solo Administrador / Director pueden crear grupos.
-    """
-
-    queryset = UserGroup.objects.all()
-    serializer_class = UserGroupSerializer
-
-    def get_permissions(self):
-        if self.request.method == "POST":
-            return [permissions.IsAuthenticated(), IsAdminOrDirector()]
-        return [permissions.IsAuthenticated()]
-
-
-class GroupDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """
-    Ver, actualizar y eliminar un grupo institucional.
-    - Solo Administrador / Director.
-    """
-
-    queryset = UserGroup.objects.all()
-    serializer_class = UserGroupSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminOrDirector]
-
-
-# ============================================================
-#  BLOQUEO / DESBLOQUEO DE USUARIOS
-# ============================================================
-
-class BlockUserView(APIView):
-    """
-    Bloquear temporalmente o permanentemente a un usuario.
-    - Solo Administrador / Director.
-    """
-
-    permission_classes = [permissions.IsAuthenticated, IsAdminOrDirector]
-
-    def post(self, request):
-        user_id = request.data.get("user_id")
-        minutes = request.data.get("minutes", None)
-
-        if not user_id:
+        if not (alumno.role and alumno.role.code == "ALUMNO"):
             return Response(
-                {"detail": "Debe enviar user_id."},
+                {"detail": "Solo puedes asignar apoderados a usuarios con rol ALUMNO."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
+        apoderado_ids = request.data.get("apoderado_ids", [])
+        if not isinstance(apoderado_ids, list):
             return Response(
-                {"detail": "Usuario no encontrado."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        user.is_blocked = True
-        if minutes:
-            try:
-                minutes = int(minutes)
-                user.blocked_until = timezone.now() + timedelta(minutes=minutes)
-            except ValueError:
-                return Response(
-                    {"detail": "El valor de 'minutes' debe ser numérico."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-        user.save()
-
-        UserActivityLog.objects.create(
-            user=request.user,
-            action=f"Bloqueó al usuario {user.username}",
-            ip_address=request.META.get("REMOTE_ADDR", None),
-            user_agent=request.headers.get("User-Agent", ""),
-        )
-
-        return Response({"detail": "Usuario bloqueado correctamente."})
-
-
-class UnblockUserView(APIView):
-    """
-    Desbloquear usuario.
-    - Solo Administrador / Director.
-    """
-
-    permission_classes = [permissions.IsAuthenticated, IsAdminOrDirector]
-
-    def post(self, request):
-        user_id = request.data.get("user_id")
-
-        if not user_id:
-            return Response(
-                {"detail": "Debe enviar user_id."},
+                {"detail": "apoderado_ids debe ser una lista de IDs."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
+        apoderados = User.objects.filter(id__in=apoderado_ids, role__code="APODERADO")
+        alumno.apoderados.set(apoderados)
+        alumno.save()
+
+        crear_log_actividad(
+            request.user,
+            f"Asignación de apoderados al alumno ID {alumno.id}.",
+            request,
+        )
+        return Response({"detail": "Apoderados asignados correctamente."}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="asignar-alumnos")
+    def asignar_alumnos(self, request, pk=None):
+        """
+        Asigna alumnos a un apoderado.
+
+        Body:
+        {
+            "alumno_ids": [1, 2, 3]
+        }
+        """
+        apoderado = self.get_object()
+
+        if not (apoderado.role and apoderado.role.code == "APODERADO"):
             return Response(
-                {"detail": "Usuario no encontrado."},
-                status=status.HTTP_404_NOT_FOUND,
+                {"detail": "Solo puedes asignar alumnos a usuarios con rol APODERADO."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        user.is_blocked = False
-        user.blocked_until = None
-        user.failed_attempts = 0
-        user.save()
+        alumno_ids = request.data.get("alumno_ids", [])
+        if not isinstance(alumno_ids, list):
+            return Response(
+                {"detail": "alumno_ids debe ser una lista de IDs."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        UserActivityLog.objects.create(
-            user=request.user,
-            action=f"Desbloqueó al usuario {user.username}",
-            ip_address=request.META.get("REMOTE_ADDR", None),
-            user_agent=request.headers.get("User-Agent", ""),
+        alumnos = User.objects.filter(id__in=alumno_ids, role__code="ALUMNO")
+        apoderado.alumnos.set(alumnos)
+        apoderado.save()
+
+        crear_log_actividad(
+            request.user,
+            f"Asignación de alumnos al apoderado ID {apoderado.id}.",
+            request,
         )
+        return Response({"detail": "Alumnos asignados correctamente."}, status=status.HTTP_200_OK)
 
-        return Response({"detail": "Usuario desbloqueado correctamente."})
+    # --------------------------------------------------------
+    #  ACTIVIDAD / LOGS DEL USUARIO
+    # --------------------------------------------------------
+
+    @action(detail=True, methods=["get"], url_path="actividad")
+    def actividad(self, request, pk=None):
+        """
+        Devuelve el historial de actividad del usuario.
+        Solo ADMIN/DIRECTOR (IsInstitutionalStaff).
+        """
+        user_obj = self.get_object()
+        logs = UserActivityLog.objects.filter(user=user_obj).order_by("-created_at")
+        serializer = ActivityLogSerializer(logs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 # ============================================================
-#  NOTIFICACIONES
+#  ROLE VIEWSET (CRUD)
 # ============================================================
 
-class UserNotificationsView(generics.ListAPIView):
+class RoleViewSet(viewsets.ModelViewSet):
     """
-    Listar notificaciones del usuario autenticado.
+    CRUD de roles institucionales.
+    - ADMIN: crea, edita, elimina
+    - Personal institucional: puede listar/ver detalles
     """
+    queryset = Role.objects.all().order_by("hierarchy")
+    serializer_class = RoleSerializer
 
+    def get_permissions(self):
+        if self.action in ["list", "retrieve"]:
+            perms = [permissions.IsAuthenticated, IsInstitutionalStaff, IsActiveUser]
+        else:
+            perms = [permissions.IsAuthenticated, IsAdminRole, IsActiveUser]
+        return [p() for p in perms]
+
+
+# ============================================================
+#  CUSTOM PERMISSIONS VIEWSET (CRUD)
+# ============================================================
+
+class CustomPermissionViewSet(viewsets.ModelViewSet):
+    """
+    CRUD de permisos personalizados.
+    Solo para administradores.
+    """
+    queryset = CustomPermission.objects.all().order_by("code")
+    serializer_class = CustomPermissionSerializer
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), IsAdminRole(), IsActiveUser()]
+
+
+# ============================================================
+#  USER GROUP VIEWSET (CRUD)
+# ============================================================
+
+class UserGroupViewSet(viewsets.ModelViewSet):
+    """
+    CRUD de grupos institucionales (cursos, talleres, niveles, etc.).
+    Manejado por personal institucional.
+    """
+    queryset = UserGroup.objects.all().order_by("name")
+    serializer_class = UserGroupSerializer
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), IsInstitutionalStaff(), IsActiveUser()]
+
+
+# ============================================================
+#  NOTIFICATION VIEWSET (CRUD)
+# ============================================================
+
+class NotificationViewSet(viewsets.ModelViewSet):
+    """
+    CRUD de notificaciones internas.
+
+    - Usuarios normales: ven solo sus notificaciones.
+    - ADMIN/DIRECTOR: si pasan ?all=1 ven todas.
+    - Creación/edición/eliminación: personal institucional.
+    """
     serializer_class = NotificationSerializer
-    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return Notification.objects.filter(user=self.request.user).order_by("-created_at")
+        user = self.request.user
+        if not user.is_authenticated:
+            return Notification.objects.none()
 
+        # ADMIN o DIRECTOR pueden ver todas con ?all=1
+        if user.role and user.role.code in ["ADMIN", "DIRECTOR"] and \
+                self.request.query_params.get("all") == "1":
+            return Notification.objects.all().select_related("user")
 
-class NotificationCreateView(generics.CreateAPIView):
-    """
-    Crear notificaciones para usuarios.
-    - Solo Administrador / Director / Docente.
-    """
-
-    serializer_class = NotificationSerializer
+        # Por defecto, solo las del usuario
+        return Notification.objects.filter(user=user).select_related("user")
 
     def get_permissions(self):
-        return [permissions.IsAuthenticated()]
+        if self.action in ["create", "update", "partial_update", "destroy"]:
+            return [permissions.IsAuthenticated(), IsInstitutionalStaff(), IsActiveUser()]
+        return [permissions.IsAuthenticated(), IsActiveUser()]
 
-    def post(self, request, *args, **kwargs):
-        # Validar rol emisor
-        if not (
-            request.user.role
-            and request.user.role.code in ("ADMIN", "DIRECTOR", "DOCENTE")
-        ):
-            return Response(
-                {"detail": "No tiene permiso para enviar notificaciones."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        return super().post(request, *args, **kwargs)
-
-
-class NotificationMarkReadView(APIView):
-    """
-    Marcar una notificación como leída.
-    """
-
-    permission_classes = [permissions.IsAuthenticated]
-
-    def post(self, request, pk):
-        try:
-            notification = Notification.objects.get(id=pk, user=request.user)
-        except Notification.DoesNotExist:
-            return Response(
-                {"detail": "Notificación no encontrada."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        notification.is_read = True
-        notification.save()
-        return Response({"detail": "Notificación marcada como leída."})
+    def perform_create(self, serializer):
+        """
+        Si el staff no especifica usuario, se asigna al propio request.user.
+        """
+        user = serializer.validated_data.get("user") or self.request.user
+        serializer.save(user=user)
 
 
 # ============================================================
-#  AUDITORÍA DE ACTIVIDAD
+#  ACTIVITY LOG VIEWSET
 # ============================================================
 
-class ActivityLogListView(generics.ListAPIView):
+class ActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    Listar historial de actividad del sistema.
-    - Solo Administrador / Director.
-    - Filtro opcional: ?user_id=
+    Vista de solo lectura para logs de actividad globales.
+    Solo ADMIN/DIRECTOR (IsInstitutionalStaff).
     """
-
+    queryset = UserActivityLog.objects.select_related("user").order_by("-created_at")
     serializer_class = ActivityLogSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminOrDirector]
 
-    def get_queryset(self):
-        qs = UserActivityLog.objects.all().order_by("-created_at")
-        user_id = self.request.query_params.get("user_id")
-        if user_id:
-            qs = qs.filter(user_id=user_id)
-        return qs
+    def get_permissions(self):
+        return [permissions.IsAuthenticated(), IsInstitutionalStaff(), IsActiveUser()]

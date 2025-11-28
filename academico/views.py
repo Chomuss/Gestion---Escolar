@@ -1,386 +1,654 @@
-from rest_framework import generics, permissions, status
-from rest_framework.views import APIView
+from django.http import HttpResponse
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import viewsets, permissions, status
+from rest_framework import filters as drf_filters
+from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.db.models import Avg
-from django.utils import timezone
 
-from usuarios.views import (
-    IsAdminRole, IsDirectorRole, IsDocenteRole, IsAlumnoRole, IsApoderadoRole
-)
-from usuarios.models import User
-from usuarios.serializers import UserSerializer
+from django.contrib.auth import get_user_model
 
 from .models import (
-    AnioAcademico, PeriodoAcademico, Nivel, Curso, Sala, Asignatura,
-    AsignaturaCursoDocente, Matricula, BloqueHorario, Asistencia,
-    Evaluacion, Calificacion, PromedioFinal, Observacion,
-    EmailQueue, ReunionApoderados, AsistenciaReunionApoderado,
-    AlertaTemprana, ReporteNotasPeriodo
+    PeriodoAcademico,
+    Curso,
+    Asignatura,
+    Sala,
+    Recurso,
+    BloqueHorario,
+    HorarioCurso,
+    Asistencia,
+    Evaluacion,
+    Calificacion,
+    PromedioFinal,
+    Observacion,
+    AlertaTemprana,
+    Intervencion,
+    ReunionApoderados,
+    ReporteNotasPeriodo,
 )
-
 from .serializers import (
-    # Año / periodos
-    AnioAcademicoSerializer, PeriodoAcademicoSerializer,
-
-    # Nivel / Curso
-    NivelSerializer, CursoSerializer, CursoCreateUpdateSerializer,
-
-    # Salas
-    SalaSerializer,
-
-    # Asignaturas
+    PeriodoAcademicoSerializer,
+    CursoSerializer,
     AsignaturaSerializer,
-
-    # Asignación docente
-    ACDSerializer, ACDCreateUpdateSerializer,
-
-    # Matrículas
-    MatriculaSerializer, MatriculaCreateUpdateSerializer,
-
-    # Horarios
-    BloqueHorarioSerializer, BloqueHorarioCreateUpdateSerializer,
-
-    # Asistencia
-    AsistenciaSerializer, AsistenciaCreateUpdateSerializer,
-
-    # Evaluaciones
-    EvaluacionSerializer, EvaluacionCreateUpdateSerializer,
-
-    # Calificaciones
-    CalificacionSerializer, CalificacionCreateUpdateSerializer,
-
-    # Promedio final
-    PromedioFinalSerializer, PromedioFinalCreateUpdateSerializer,
-
-    # Observaciones
-    ObservacionSerializer, ObservacionCreateUpdateSerializer,
-
-    # EmailQueue
-    EmailQueueSerializer, EmailQueueCreateSerializer,
-
-    # Reuniones
-    ReunionApoderadosSerializer, ReunionApoderadosCreateUpdateSerializer,
-    AsistenciaReunionSerializer, AsistenciaReunionCreateUpdateSerializer,
-
-    # Alertas tempranas
-    AlertaTempranaSerializer, AlertaTempranaCreateUpdateSerializer,
-
-    # Reporte periodo
-    ReporteNotasPeriodoSerializer, ReporteNotasPeriodoCreateUpdateSerializer,
+    SalaSerializer,
+    RecursoSerializer,
+    BloqueHorarioSerializer,
+    HorarioCursoSerializer,
+    AsistenciaSerializer,
+    EvaluacionSerializer,
+    CalificacionSerializer,
+    PromedioFinalSerializer,
+    ObservacionSerializer,
+    AlertaTempranaSerializer,
+    IntervencionSerializer,
+    ReunionApoderadosSerializer,
+    ReporteNotasPeriodoSerializer,
+    UsuarioSimpleSerializer,
+)
+from .filters import (
+    CursoFilter,
+    AsignaturaFilter,
+    AsistenciaFilter,
+    PromedioFinalFilter,
+    AlertaTempranaFilter,
+    EvaluacionFilter,
+)
+from .permissions import (
+    IsDocente,
+    IsAlumno,
+    IsApoderado,
+    IsAdministradorAcademico,
+    IsJefeCurso,
+    IsDocenteOrAdministradorAcademico,
+    IsDocenteOrJefeCursoOrAdministradorAcademico,
 )
 
+# Services
+from academico.services import (
+    asistencia as asistencia_service,
+    evaluacion as evaluacion_service,
+    alerta as alerta_service,
+    reporte as reporte_service,
+)
+
+# Utils
+from academico.utils import excel as excel_utils
+from academico.utils import pdf as pdf_utils
+
+User = get_user_model()
+
+
 # ============================================================
-#  AÑO Y PERIODO ACADEMICO
+#  BASE VIEWSET
 # ============================================================
 
-class AnioAcademicoListCreateView(generics.ListCreateAPIView):
-    queryset = AnioAcademico.objects.all()
-    serializer_class = AnioAcademicoSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
+class BaseViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet base con configuración común:
+    - Autenticación obligatoria
+    - Filtros: django-filter, búsqueda y ordenamiento
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, drf_filters.SearchFilter, drf_filters.OrderingFilter]
 
 
-class AnioAcademicoDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = AnioAcademico.objects.all()
-    serializer_class = AnioAcademicoSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
+# ============================================================
+#  PERÍODOS ACADÉMICOS (por si quieres exponerlos)
+# ============================================================
 
-
-class PeriodoAcademicoListCreateView(generics.ListCreateAPIView):
-    queryset = PeriodoAcademico.objects.select_related("anio").all()
-    serializer_class = PeriodoAcademicoSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
-
-
-class PeriodoAcademicoDetailView(generics.RetrieveUpdateDestroyAPIView):
+class PeriodoAcademicoViewSet(BaseViewSet):
     queryset = PeriodoAcademico.objects.all()
     serializer_class = PeriodoAcademicoSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
+    search_fields = ["nombre", "anio", "tipo"]
+    ordering_fields = ["anio", "fecha_inicio", "fecha_fin"]
+    ordering = ["-anio", "-fecha_inicio"]
 
+    def get_permissions(self):
+        # Solo admin académico puede crear/editar periodos; otros solo leen
+        if self.action in ["create", "update", "partial_update", "destroy"]:
+            return [permissions.IsAuthenticated(), IsAdministradorAcademico()]
+        return [permissions.IsAuthenticated()]
 
 
 # ============================================================
-#  NIVEL / CURSOS
+#  CURSOS
 # ============================================================
 
-class NivelListCreateView(generics.ListCreateAPIView):
-    queryset = Nivel.objects.all()
-    serializer_class = NivelSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
-
-
-class CursoListView(generics.ListAPIView):
-    queryset = Curso.objects.all()
+class CursoViewSet(BaseViewSet):
+    queryset = (
+        Curso.objects
+        .select_related("periodo", "jefe_curso")
+        .prefetch_related("estudiantes")
+        .all()
+    )
     serializer_class = CursoSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    filterset_class = CursoFilter
+    search_fields = ["nombre", "nivel", "periodo__nombre"]
+    ordering_fields = ["nivel", "nombre", "periodo__anio"]
+    ordering = ["nivel", "nombre"]
 
+    def get_permissions(self):
+        # Crear/editar/eliminar cursos → solo admin académico
+        if self.action in ["create", "update", "partial_update", "destroy"]:
+            return [permissions.IsAuthenticated(), IsAdministradorAcademico()]
+        # Listar/ver cursos → cualquier usuario autenticado
+        return [permissions.IsAuthenticated()]
 
-class CursoCreateView(generics.CreateAPIView):
-    queryset = Curso.objects.all()
-    serializer_class = CursoCreateUpdateSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
+    @action(detail=True, methods=["get"], url_path="horario")
+    def horario(self, request, pk=None):
+        """
+        /cursos/{id}/horario/
+        Devuelve el horario completo del curso (HorariosCurso).
+        """
+        curso = self.get_object()
+        qs = (
+            HorarioCurso.objects
+            .select_related("curso", "asignatura", "docente", "sala", "bloque", "periodo")
+            .filter(curso=curso)
+        )
+        serializer = HorarioCursoSerializer(qs, many=True, context=self.get_serializer_context())
+        return Response(serializer.data)
 
-
-class CursoDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Curso.objects.all()
-    serializer_class = CursoCreateUpdateSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
-
-
-
-# ============================================================
-#  SALAS
-# ============================================================
-
-class SalaListCreateView(generics.ListCreateAPIView):
-    queryset = Sala.objects.all()
-    serializer_class = SalaSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
-
+    @action(detail=True, methods=["get"], url_path="estudiantes")
+    def estudiantes(self, request, pk=None):
+        """
+        /cursos/{id}/estudiantes/
+        Devuelve la lista de estudiantes del curso.
+        """
+        curso = self.get_object()
+        estudiantes = curso.estudiantes.all()
+        serializer = UsuarioSimpleSerializer(estudiantes, many=True, context=self.get_serializer_context())
+        return Response(serializer.data)
 
 
 # ============================================================
 #  ASIGNATURAS
 # ============================================================
 
-class AsignaturaListCreateView(generics.ListCreateAPIView):
+class AsignaturaViewSet(BaseViewSet):
     queryset = Asignatura.objects.all()
     serializer_class = AsignaturaSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
+    filterset_class = AsignaturaFilter
+    search_fields = ["nombre", "codigo"]
+    ordering_fields = ["nombre", "codigo"]
+    ordering = ["nombre"]
 
-
-class AsignaturaDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Asignatura.objects.all()
-    serializer_class = AsignaturaSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
-
-
-
-# ============================================================
-#  ASIGNACION DOCENTE
-# ============================================================
-
-class ACDListView(generics.ListAPIView):
-    queryset = AsignaturaCursoDocente.objects.all()
-    serializer_class = ACDSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-
-class ACDCreateView(generics.CreateAPIView):
-    queryset = AsignaturaCursoDocente.objects.all()
-    serializer_class = ACDCreateUpdateSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
-
+    def get_permissions(self):
+        if self.action in ["create", "update", "partial_update", "destroy"]:
+            return [permissions.IsAuthenticated(), IsAdministradorAcademico()]
+        return [permissions.IsAuthenticated()]
 
 
 # ============================================================
-#  MATRICULAS
+#  SALAS
 # ============================================================
 
-class MatriculaListView(generics.ListAPIView):
-    queryset = Matricula.objects.select_related("estudiante", "curso").all()
-    serializer_class = MatriculaSerializer
-    permission_classes = [permissions.IsAuthenticated]
+class SalaViewSet(BaseViewSet):
+    queryset = Sala.objects.all()
+    serializer_class = SalaSerializer
+    search_fields = ["nombre", "codigo"]
+    ordering_fields = ["nombre", "codigo", "capacidad"]
+    ordering = ["nombre"]
 
-
-class MatriculaCreateView(generics.CreateAPIView):
-    queryset = Matricula.objects.all()
-    serializer_class = MatriculaCreateUpdateSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
-
+    def get_permissions(self):
+        if self.action in ["create", "update", "partial_update", "destroy"]:
+            return [permissions.IsAuthenticated(), IsAdministradorAcademico()]
+        return [permissions.IsAuthenticated()]
 
 
 # ============================================================
-#  HORARIOS
+#  RECURSOS
 # ============================================================
 
-class HorarioListView(generics.ListAPIView):
-    queryset = BloqueHorario.objects.select_related("asignacion").all()
+class RecursoViewSet(BaseViewSet):
+    queryset = Recurso.objects.select_related("sala").all()
+    serializer_class = RecursoSerializer
+    search_fields = ["nombre", "sala__nombre"]
+    ordering_fields = ["nombre"]
+    ordering = ["nombre"]
+
+    def get_permissions(self):
+        if self.action in ["create", "update", "partial_update", "destroy"]:
+            return [permissions.IsAuthenticated(), IsAdministradorAcademico()]
+        return [permissions.IsAuthenticated()]
+
+
+# ============================================================
+#  BLOQUES Y HORARIOS DE CURSO
+# ============================================================
+
+class BloqueHorarioViewSet(BaseViewSet):
+    queryset = BloqueHorario.objects.select_related("periodo").all()
     serializer_class = BloqueHorarioSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    search_fields = ["periodo__nombre"]
+    ordering_fields = ["dia_semana", "hora_inicio", "hora_fin"]
+    ordering = ["dia_semana", "hora_inicio"]
+
+    def get_permissions(self):
+        if self.action in ["create", "update", "partial_update", "destroy"]:
+            # Docente o Admin académico
+            return [permissions.IsAuthenticated(), IsDocenteOrAdministradorAcademico()]
+        return [permissions.IsAuthenticated()]
 
 
-class HorarioCreateView(generics.CreateAPIView):
-    queryset = BloqueHorario.objects.all()
-    serializer_class = BloqueHorarioCreateUpdateSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminRole]
+class HorarioViewSet(BaseViewSet):
+    """
+    Horarios de curso (HorariosCurso).
+    """
+    queryset = (
+        HorarioCurso.objects
+        .select_related("curso", "asignatura", "docente", "sala", "bloque", "periodo")
+        .all()
+    )
+    serializer_class = HorarioCursoSerializer
+    search_fields = ["curso__nombre", "asignatura__nombre", "docente__last_name"]
+    ordering_fields = ["curso__nombre", "bloque__dia_semana", "bloque__hora_inicio"]
+    ordering = ["curso__nombre", "bloque__dia_semana", "bloque__hora_inicio"]
 
+    def get_permissions(self):
+        # Crear/editar/eliminar horarios → docentes o admin académico
+        if self.action in ["create", "update", "partial_update", "destroy"]:
+            return [permissions.IsAuthenticated(), IsDocenteOrAdministradorAcademico()]
+        return [permissions.IsAuthenticated()]
 
 
 # ============================================================
 #  ASISTENCIA
 # ============================================================
 
-class AsistenciaCreateView(generics.CreateAPIView):
-    queryset = Asistencia.objects.all()
-    serializer_class = AsistenciaCreateUpdateSerializer
-    permission_classes = [permissions.IsAuthenticated, IsDocenteRole]
+class AsistenciaViewSet(BaseViewSet):
+    queryset = (
+        Asistencia.objects
+        .select_related("estudiante", "curso", "asignatura", "registrado_por")
+        .all()
+    )
+    serializer_class = AsistenciaSerializer
+    filterset_class = AsistenciaFilter
+    search_fields = ["estudiante__first_name", "estudiante__last_name", "curso__nombre"]
+    ordering_fields = ["fecha", "curso__nombre", "asignatura__nombre"]
+    ordering = ["-fecha"]
 
-    def perform_create(self, serializer):
-        asistencia = serializer.save(registrado_por=self.request.user)
+    def get_permissions(self):
+        # Registrar/modificar asistencia → Docente, JefeCurso, Admin
+        if self.action in ["create", "update", "partial_update", "destroy", "alertas"]:
+            return [permissions.IsAuthenticated(), IsDocenteOrJefeCursoOrAdministradorAcademico()]
+        # Ver asistencia → cualquier usuario autenticado
+        return [permissions.IsAuthenticated()]
 
-        # CORREO AUTOMÁTICO PARA APODERADOS
-        EmailQueue.objects.create(
-            tipo_destinatario="APODERADOS",
-            asunto=f"Asistencia registrada - {asistencia.estudiante}",
-            contenido=f"Estado: {asistencia.estado}."
+    @action(detail=True, methods=["get", "post"], url_path="alertas")
+    def alertas(self, request, pk=None):
+        """
+        /asistencias/{id}/alertas/
+
+        GET:
+          - Lista alertas tempranas relacionadas al estudiante+curso de esta asistencia.
+
+        POST:
+          - Dispara el flujo de generación de alerta por asistencia
+            (si cumple criterios de ausentismo) y devuelve la alerta creada
+            o un mensaje indicando que no se generó.
+        """
+        asistencia = self.get_object()
+        estudiante = asistencia.estudiante
+        curso = asistencia.curso
+
+        # GET → listar alertas existentes
+        if request.method == "GET":
+            qs = AlertaTemprana.objects.filter(estudiante=estudiante, curso=curso)
+            serializer = AlertaTempranaSerializer(qs, many=True, context=self.get_serializer_context())
+            return Response(serializer.data)
+
+        # POST → intentar generar una nueva alerta por asistencia
+        alerta = asistencia_service.generar_alerta_por_asistencia(
+            estudiante=estudiante,
+            curso=curso,
+            periodo=getattr(curso, "periodo", None),
+            porcentaje_umbral=20.0,
+            ventana_dias=30,
+            creada_por=request.user,
         )
 
-        # ALERTA TEMPRANA SI HAY MUCHAS AUSENCIAS
-        ausencias = Asistencia.objects.filter(
-            estudiante=asistencia.estudiante,
-            estado="AUSENTE"
-        ).count()
-
-        if ausencias >= 5:
-            AlertaTemprana.objects.create(
-                estudiante=asistencia.estudiante,
-                curso=asistencia.curso,
-                motivo="Altas ausencias",
-                descripcion="Se detectaron múltiples ausencias consecutivas.",
-                nivel="MEDIO",
-                generada_por=self.request.user,
+        if not alerta:
+            return Response(
+                {"detail": "No se generó una nueva alerta (no se superó el umbral o ya existe una alerta abierta reciente)."},
+                status=status.HTTP_200_OK,
             )
 
+        serializer = AlertaTempranaSerializer(alerta, context=self.get_serializer_context())
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 # ============================================================
 #  EVALUACIONES
 # ============================================================
 
-class EvaluacionCreateView(generics.CreateAPIView):
-    queryset = Evaluacion.objects.all()
-    serializer_class = EvaluacionCreateUpdateSerializer
-    permission_classes = [permissions.IsAuthenticated, IsDocenteRole]
+class EvaluacionViewSet(BaseViewSet):
+    queryset = (
+        Evaluacion.objects
+        .select_related("curso", "asignatura", "docente", "periodo")
+        .all()
+    )
+    serializer_class = EvaluacionSerializer
+    filterset_class = EvaluacionFilter
+    search_fields = ["titulo", "descripcion", "curso__nombre", "asignatura__nombre"]
+    ordering_fields = ["fecha_evaluacion", "fecha_limite_publicacion", "estado", "tipo"]
+    ordering = ["-fecha_evaluacion"]
 
-    def perform_create(self, serializer):
-        evaluacion = serializer.save(creado_por=self.request.user)
+    def get_permissions(self):
+        # Crear/modificar evaluaciones → Docente o Admin académico
+        if self.action in ["create", "update", "partial_update", "destroy", "publicar", "exportar_notas_excel"]:
+            return [permissions.IsAuthenticated(), IsDocenteOrAdministradorAcademico()]
+        # Ver evaluaciones → cualquier usuario autenticado
+        return [permissions.IsAuthenticated()]
 
-        # CORREO AUTOMÁTICO A TODO EL CURSO
-        EmailQueue.objects.create(
-            tipo_destinatario="CURSO",
-            destinatario_curso=evaluacion.asignacion.curso,
-            asunto="Nueva evaluación programada",
-            contenido=f"Evaluación: {evaluacion.titulo}\nFecha: {evaluacion.fecha}",
+    @action(detail=True, methods=["post"], url_path="publicar")
+    def publicar(self, request, pk=None):
+        """
+        /evaluaciones/{id}/publicar/
+
+        Publica una evaluación:
+          - Cambia estado a PUBLICADA
+          - Fija fecha_publicacion
+          - Opcionalmente notifica a estudiantes y apoderados
+
+        Body JSON (opcional):
+        {
+          "notificar_estudiantes": true/false,
+          "notificar_apoderados": true/false
+        }
+        """
+        evaluacion = self.get_object()
+
+        def _parse_bool(value, default=False):
+            if value is None:
+                return default
+            if isinstance(value, bool):
+                return value
+            return str(value).lower() in ["1", "true", "t", "yes", "on"]
+
+        notificar_estudiantes = _parse_bool(request.data.get("notificar_estudiantes"), default=True)
+        notificar_apoderados = _parse_bool(request.data.get("notificar_apoderados"), default=False)
+
+        evaluacion = evaluacion_service.publicar_evaluacion(
+            evaluacion=evaluacion,
+            usuario=request.user,
+            notificar_estudiantes=notificar_estudiantes,
+            notificar_apoderados=notificar_apoderados,
         )
 
+        serializer = self.get_serializer(evaluacion)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["get"], url_path="exportar-notas-excel")
+    def exportar_notas_excel(self, request, pk=None):
+        """
+        /evaluaciones/{id}/exportar-notas-excel/
+
+        Devuelve un CSV (compatible con Excel) con las notas de la evaluación.
+        """
+        evaluacion = self.get_object()
+        csv_content = excel_utils.generar_csv_notas_evaluacion(evaluacion)
+        file_name = f"notas_evaluacion_{evaluacion.id}.csv"
+
+        response = HttpResponse(csv_content, content_type="text/csv; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="{file_name}"'
+        return response
 
 
 # ============================================================
-#  NOTAS
+#  NOTAS (CALIFICACIONES)
 # ============================================================
 
-class CalificacionCreateView(generics.CreateAPIView):
-    queryset = Calificacion.objects.all()
-    serializer_class = CalificacionCreateUpdateSerializer
-    permission_classes = [permissions.IsAuthenticated, IsDocenteRole]
+class NotaViewSet(BaseViewSet):
+    """
+    Gestiona Calificaciones (notas).
+    """
+    queryset = (
+        Calificacion.objects
+        .select_related("evaluacion", "estudiante", "evaluacion__curso", "evaluacion__asignatura")
+        .all()
+    )
+    serializer_class = CalificacionSerializer
+    search_fields = ["estudiante__first_name", "estudiante__last_name", "evaluacion__titulo"]
+    ordering_fields = ["nota", "fecha_registro"]
+    ordering = ["-fecha_registro"]
 
-    def perform_create(self, serializer):
-        calificacion = serializer.save(registrado_por=self.request.user)
+    def get_permissions(self):
+        # Crear/modificar notas → Docente o Admin
+        if self.action in ["create", "update", "partial_update", "destroy", "importar_excel"]:
+            return [permissions.IsAuthenticated(), IsDocenteOrAdministradorAcademico()]
+        # Ver notas → cualquier usuario autenticado
+        return [permissions.IsAuthenticated()]
 
-        # CORREO A APODERADOS
-        EmailQueue.objects.create(
-            tipo_destinatario="APODERADOS",
-            asunto=f"Calificación registrada en {calificacion.evaluacion.asignacion.asignatura.nombre}",
-            contenido=f"Nota: {calificacion.puntaje_obtenido}/{calificacion.evaluacion.puntaje_maximo}",
-        )
+    @action(detail=False, methods=["post"], url_path="importar-excel")
+    def importar_excel(self, request):
+        """
+        /notas/importar-excel/
 
-        # ALERTA TEMPRANA SI LA NOTA ES BAJA
-        porcentaje = float(calificacion.puntaje_obtenido / calificacion.evaluacion.puntaje_maximo) * 100
-        if porcentaje < 60:
-            AlertaTemprana.objects.create(
-                estudiante=calificacion.estudiante,
-                curso=calificacion.evaluacion.asignacion.curso,
-                motivo="Bajo rendimiento",
-                descripcion=f"Nota baja: {calificacion.puntaje_obtenido}",
-                nivel="ALTO",
-                generada_por=self.request.user
+        Importa notas desde un archivo CSV (Excel) para una evaluación.
+
+        Espera:
+        - evaluacion: ID de la evaluación
+        - archivo: archivo CSV subido (multipart/form-data)
+
+        Retorna:
+        {
+          "evaluacion": <id>,
+          "procesados": <int>
+        }
+        """
+        evaluacion_id = request.data.get("evaluacion")
+        archivo = request.FILES.get("archivo")
+
+        if not evaluacion_id or not archivo:
+            return Response(
+                {"detail": "Debe enviar 'evaluacion' y el archivo en 'archivo'."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
+        try:
+            evaluacion = Evaluacion.objects.select_related("docente").get(id=evaluacion_id)
+        except Evaluacion.DoesNotExist:
+            return Response(
+                {"detail": "La evaluación indicada no existe."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Seguridad extra: solo el docente de la evaluación o admin académico
+        user = request.user
+        es_docente_eval = evaluacion.docente_id == user.id
+        es_admin_academico = getattr(user, "role", None) and user.role.code in ["ADMIN", "DIRECTOR"]
+
+        if not (es_docente_eval or es_admin_academico):
+            return Response(
+                {"detail": "No tiene permisos para importar notas en esta evaluación."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        procesados = excel_utils.importar_notas_desde_csv_para_evaluacion(
+            evaluacion=evaluacion,
+            file=archivo,
+            actualizar_existentes=True,
+        )
+
+        return Response(
+            {"evaluacion": evaluacion.id, "procesados": procesados},
+            status=status.HTTP_200_OK,
+        )
+
+
+# ============================================================
+#  PROMEDIOS FINALES (extra profesional)
+# ============================================================
+
+class PromedioFinalViewSet(BaseViewSet):
+    queryset = (
+        PromedioFinal.objects
+        .select_related("estudiante", "curso", "asignatura", "periodo")
+        .all()
+    )
+    serializer_class = PromedioFinalSerializer
+    filterset_class = PromedioFinalFilter
+    search_fields = ["estudiante__first_name", "estudiante__last_name", "curso__nombre"]
+    ordering_fields = ["promedio", "fecha_calculo"]
+    ordering = ["-fecha_calculo"]
+
+    def get_permissions(self):
+        # Lectura: todos; modificación: solo admin académico
+        if self.action in ["create", "update", "partial_update", "destroy"]:
+            return [permissions.IsAuthenticated(), IsAdministradorAcademico()]
+        return [permissions.IsAuthenticated()]
+
+
+# ============================================================
+#  REUNIONES CON APODERADOS
+# ============================================================
+
+class ReunionViewSet(BaseViewSet):
+    """
+    Gestiona reuniones con apoderados (ReunionApoderados).
+    """
+    queryset = (
+        ReunionApoderados.objects
+        .select_related("curso", "estudiante", "apoderado", "docente")
+        .all()
+    )
+    serializer_class = ReunionApoderadosSerializer
+    search_fields = ["curso__nombre", "estudiante__last_name", "apoderado__last_name"]
+    ordering_fields = ["fecha", "curso__nombre"]
+    ordering = ["-fecha"]
+
+    def get_permissions(self):
+        # Crear/editar reuniones → Docentes y admin académico
+        if self.action in ["create", "update", "partial_update", "destroy"]:
+            return [permissions.IsAuthenticated(), IsDocenteOrAdministradorAcademico()]
+        return [permissions.IsAuthenticated()]
 
 
 # ============================================================
 #  OBSERVACIONES
 # ============================================================
 
-class ObservacionCreateView(generics.CreateAPIView):
-    queryset = Observacion.objects.all()
-    serializer_class = ObservacionCreateUpdateSerializer
-    permission_classes = [permissions.IsAuthenticated, IsDocenteRole]
+class ObservacionViewSet(BaseViewSet):
+    queryset = (
+        Observacion.objects
+        .select_related("estudiante", "autor", "curso")
+        .all()
+    )
+    serializer_class = ObservacionSerializer
+    search_fields = [
+        "estudiante__first_name",
+        "estudiante__last_name",
+        "curso__nombre",
+        "descripcion",
+    ]
+    ordering_fields = ["fecha", "gravedad"]
+    ordering = ["-fecha"]
 
-    def perform_create(self, serializer):
-        observacion = serializer.save(registrada_por=self.request.user)
-
-        # CORREO AUTOMÁTICO
-        EmailQueue.objects.create(
-            tipo_destinatario="APODERADOS",
-            asunto=f"Nueva observación registrada",
-            contenido=f"Tipo: {observacion.tipo}\nGravedad: {observacion.gravedad}\n{observacion.descripcion}",
-        )
-
+    def get_permissions(self):
+        # Crear/editar observaciones → docentes y admin académico
+        if self.action in ["create", "update", "partial_update", "destroy"]:
+            return [permissions.IsAuthenticated(), IsDocenteOrAdministradorAcademico()]
+        return [permissions.IsAuthenticated()]
 
 
 # ============================================================
-#  REUNIONES DE APODERADOS
+#  INTERVENCIONES
 # ============================================================
 
-class ReunionCreateView(generics.CreateAPIView):
-    queryset = ReunionApoderados.objects.all()
-    serializer_class = ReunionApoderadosCreateUpdateSerializer
-    permission_classes = [permissions.IsAuthenticated, IsDocenteRole]
+class IntervencionViewSet(BaseViewSet):
+    queryset = (
+        Intervencion.objects
+        .select_related("estudiante", "alerta", "observacion", "responsable")
+        .all()
+    )
+    serializer_class = IntervencionSerializer
+    search_fields = [
+        "estudiante__first_name",
+        "estudiante__last_name",
+        "responsable__last_name",
+        "descripcion",
+    ]
+    ordering_fields = ["fecha", "estado"]
+    ordering = ["-fecha"]
 
-    def perform_create(self, serializer):
-        reunion = serializer.save(docente=self.request.user)
-
-        # Avisar correos a todo el curso
-        EmailQueue.objects.create(
-            tipo_destinatario="CURSO",
-            destinatario_curso=reunion.curso,
-            asunto="Reunión de apoderados",
-            contenido=f"Fecha: {reunion.fecha}\nTema: {reunion.tema}",
-        )
-
+    def get_permissions(self):
+        if self.action in ["create", "update", "partial_update", "destroy"]:
+            return [permissions.IsAuthenticated(), IsDocenteOrAdministradorAcademico()]
+        return [permissions.IsAuthenticated()]
 
 
 # ============================================================
 #  ALERTAS TEMPRANAS
 # ============================================================
 
-class AlertaListView(generics.ListAPIView):
-    queryset = AlertaTemprana.objects.all()
+class AlertaTempranaViewSet(BaseViewSet):
+    queryset = (
+        AlertaTemprana.objects
+        .select_related("estudiante", "curso", "creada_por")
+        .all()
+    )
     serializer_class = AlertaTempranaSerializer
-    permission_classes = [permissions.IsAuthenticated, IsDirectorRole]
+    filterset_class = AlertaTempranaFilter
+    search_fields = [
+        "estudiante__first_name",
+        "estudiante__last_name",
+        "curso__nombre",
+        "descripcion",
+    ]
+    ordering_fields = ["fecha_creacion", "nivel_riesgo", "estado"]
+    ordering = ["-fecha_creacion"]
 
+    def get_permissions(self):
+        # Cerrar o crear alertas → Docente/Admin
+        if self.action in ["create", "update", "partial_update", "destroy", "cerrar"]:
+            return [permissions.IsAuthenticated(), IsDocenteOrAdministradorAcademico()]
+        return [permissions.IsAuthenticated()]
 
-class AlertaDetailView(generics.RetrieveAPIView):
-    queryset = AlertaTemprana.objects.all()
-    serializer_class = AlertaTempranaSerializer
-    permission_classes = [permissions.IsAuthenticated, IsDirectorRole]
+    @action(detail=True, methods=["post"], url_path="cerrar")
+    def cerrar(self, request, pk=None):
+        """
+        /alertas-tempranas/{id}/cerrar/
 
+        Marca una alerta como CERRADA.
+        """
+        alerta = self.get_object()
+        alerta = alerta_service.cerrar_alerta(alerta, usuario=request.user)
+        serializer = self.get_serializer(alerta)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 # ============================================================
-#  REPORTE DE NOTAS POR PERIODO
+#  REPORTES DE NOTAS POR PERÍODO
 # ============================================================
 
-class GenerarReportePeriodo(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsDocenteRole]
+class ReporteNotasViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Reportes de notas por período (ReporteNotasPeriodo).
 
-    def post(self, request):
-        estudiante_id = request.data.get("estudiante_id")
-        periodo_id = request.data.get("periodo_id")
+    Normalmente se generan vía Celery/servicio, pero aquí se exponen
+    para consulta, y se agrega una acción para generar PDF.
+    """
+    queryset = (
+        ReporteNotasPeriodo.objects
+        .select_related("curso", "asignatura", "periodo", "generado_por")
+        .all()
+    )
+    serializer_class = ReporteNotasPeriodoSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, drf_filters.SearchFilter, drf_filters.OrderingFilter]
+    search_fields = ["curso__nombre", "asignatura__nombre", "periodo__nombre"]
+    ordering_fields = ["fecha_generacion", "curso__nombre", "asignatura__nombre"]
+    ordering = ["-fecha_generacion"]
 
-        estudiante = User.objects.get(id=estudiante_id)
-        periodo = PeriodoAcademico.objects.get(id=periodo_id)
+    @action(detail=True, methods=["post"], url_path="generar-pdf")
+    def generar_pdf(self, request, pk=None):
+        """
+        /reportes-notas/{id}/generar-pdf/
 
-        promedio = Calificacion.objects.filter(
-            estudiante=estudiante,
-            evaluacion__periodo=periodo
-        ).aggregate(avg=Avg("puntaje_obtenido"))["avg"] or 0
-
-        reporte = ReporteNotasPeriodo.objects.create(
-            estudiante=estudiante,
-            periodo=periodo,
-            promedio_general=promedio,
-        )
-
-        return Response(ReporteNotasPeriodoSerializer(reporte).data)
+        Genera (o regenera) el PDF asociado a este reporte
+        y lo guarda en el campo archivo_pdf.
+        """
+        reporte = self.get_object()
+        pdf_utils.adjuntar_pdf_a_reporte(reporte)
+        serializer = self.get_serializer(reporte)
+        return Response(serializer.data, status=status.HTTP_200_OK)
